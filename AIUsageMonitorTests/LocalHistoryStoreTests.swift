@@ -93,6 +93,40 @@ final class LocalHistoryStoreTests: XCTestCase {
         ])
     }
 
+    func testInvalidUTF8LineIsolatedAcrossReadsReconstructionAndPruning() async throws {
+        let root = try temporaryRoot()
+        let store = makeStore(root: root)
+        let firstTimestamp = UsageMonitorFixtures.baseDate
+        let laterTimestamp = UsageMonitorFixtures.baseDate.addingTimeInterval(2)
+        let claude = try XCTUnwrap(UsageMonitorFixtures.normalSnapshot.provider(.claude))
+        let codex = try XCTUnwrap(UsageMonitorFixtures.warningSnapshot.provider(.codex))
+
+        try await store.appendProviderSnapshot(claude, capturedAt: firstTimestamp)
+        var malformedLine = Data(#"{"schemaVersion":1,"recordKind":"providerFailure","timestamp":"2025-01-01T00:00:01Z","provider":"claude","error":{"code":"unavailable","displayMessage":""#.utf8)
+        malformedLine.append(0xFF)
+        malformedLine.append(contentsOf: Data(#""}}"#.utf8))
+        malformedLine.append(0x0A)
+        try appendRawData(malformedLine, to: store.historyFileURL)
+        try await store.appendProviderSnapshot(codex, capturedAt: laterTimestamp)
+
+        let allRecords = try await store.records(since: .distantPast)
+        let rangeRecords = try await store.records(since: laterTimestamp)
+        let latest = try await store.latestUsableProviderSnapshots()
+
+        XCTAssertEqual(allRecords.map(\.timestamp), [firstTimestamp, laterTimestamp])
+        XCTAssertEqual(rangeRecords.map(\.timestamp), [laterTimestamp])
+        XCTAssertEqual(latest[.claude], claude)
+        XCTAssertEqual(latest[.codex], codex)
+
+        try await store.prune(olderThan: laterTimestamp)
+
+        let retainedRecords = try await store.records(since: .distantPast)
+        XCTAssertEqual(retainedRecords.map(\.timestamp), [laterTimestamp])
+        XCTAssertFalse(try Data(contentsOf: store.historyFileURL).contains(0xFF))
+        try assertMode(0o700, at: root)
+        try assertMode(0o600, at: store.historyFileURL)
+    }
+
     func testLatestUsableReconstructionStaysProviderLocalAcrossFailuresAndMalformedPeerRecords() async throws {
         let root = try temporaryRoot()
         let store = makeStore(root: root)
@@ -137,6 +171,65 @@ final class LocalHistoryStoreTests: XCTestCase {
         XCTAssertEqual(snapshots.map(\.capturedAt), [boundarySnapshot.capturedAt, newSnapshot.capturedAt])
         try assertMode(0o700, at: root)
         try assertMode(0o600, at: store.historyFileURL)
+    }
+
+    func testSubsecondTimestampRoundTripsAndRespectsRangeBoundaries() async throws {
+        let root = try temporaryRoot()
+        let store = makeStore(root: root)
+        let timestamp = UsageMonitorFixtures.baseDate.addingTimeInterval(0.5)
+        let persistedSnapshot = snapshot(at: timestamp, kind: .claudeSession, percent: 20)
+
+        try await store.append(persistedSnapshot)
+
+        let allRecords = try await store.records(since: .distantPast)
+        let includedRecords = try await store.records(since: UsageMonitorFixtures.baseDate.addingTimeInterval(0.25))
+        let excludedRecords = try await store.records(since: UsageMonitorFixtures.baseDate.addingTimeInterval(0.75))
+
+        XCTAssertEqual(allRecords.count, 1)
+        XCTAssertEqual(try XCTUnwrap(allRecords.first).timestamp.timeIntervalSince1970, timestamp.timeIntervalSince1970, accuracy: 0.000_001)
+        XCTAssertEqual(includedRecords.map(\.timestamp), [timestamp])
+        XCTAssertEqual(excludedRecords, [])
+    }
+
+    func testPruneRetainsFractionalAndExactCutoffRecords() async throws {
+        let root = try temporaryRoot()
+        let store = makeStore(root: root)
+        let base = UsageMonitorFixtures.baseDate
+        let cutoff = base.addingTimeInterval(0.25)
+        let oldSnapshot = snapshot(at: base, kind: .codexWeek, percent: 10)
+        let exactCutoffSnapshot = snapshot(at: cutoff, kind: .codexWeek, percent: 20)
+        let fractionalSnapshot = snapshot(at: base.addingTimeInterval(0.5), kind: .codexWeek, percent: 30)
+
+        try await store.append(oldSnapshot)
+        try await store.append(exactCutoffSnapshot)
+        try await store.append(fractionalSnapshot)
+        try await store.prune(olderThan: cutoff)
+
+        let retainedSnapshots = try await store.snapshots(since: .distantPast)
+
+        XCTAssertEqual(retainedSnapshots.map(\.capturedAt), [exactCutoffSnapshot.capturedAt, fractionalSnapshot.capturedAt])
+        try assertMode(0o700, at: root)
+        try assertMode(0o600, at: store.historyFileURL)
+    }
+
+    func testLegacyWholeSecondISO8601LineStillDecodes() async throws {
+        let root = try temporaryRoot()
+        let store = makeStore(root: root)
+        try LocalPersistence.ensureRoot(at: root)
+        try LocalPersistence.append(
+            Data((#"{"error":{"code":"unavailable","displayMessage":"Legacy failure"},"provider":"claude","recordKind":"providerFailure","schemaVersion":1,"timestamp":"2025-01-01T00:00:00Z"}"# + "\n").utf8),
+            to: store.historyFileURL
+        )
+
+        let records = try await store.records(since: .distantPast)
+
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(try XCTUnwrap(records.first).timestamp, UsageMonitorFixtures.baseDate)
+        guard case let .providerFailure(failure) = records.first else {
+            return XCTFail("Expected legacy provider failure record.")
+        }
+        XCTAssertEqual(failure.provider, .claude)
+        XCTAssertEqual(failure.error.displayMessage, "Legacy failure")
     }
 
     func testRetentionPruneUsesClockDerivedCutoff() async throws {
@@ -195,7 +288,10 @@ final class LocalHistoryStoreTests: XCTestCase {
     }
 
     private func appendRawLine(_ line: String, to url: URL) throws {
-        let data = Data((line + "\n").utf8)
+        try appendRawData(Data((line + "\n").utf8), to: url)
+    }
+
+    private func appendRawData(_ data: Data, to url: URL) throws {
         let handle = try FileHandle(forWritingTo: url)
         defer {
             try? handle.close()

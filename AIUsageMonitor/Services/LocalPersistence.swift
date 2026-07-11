@@ -123,17 +123,13 @@ actor LocalHistoryStore: HistoryStoring {
             return []
         }
         let data = try Data(contentsOf: historyFileURL)
-        guard let contents = String(data: data, encoding: .utf8) else {
-            throw LocalPersistenceError.invalidUTF8(historyFileURL)
-        }
 
         var records: [NumberedHistoryRecord] = []
-        for (offset, line) in contents.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
-            let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmedLine.isEmpty, let lineData = trimmedLine.data(using: .utf8) else {
+        for (offset, line) in data.split(separator: 0x0A, omittingEmptySubsequences: false).enumerated() {
+            guard !line.isEmpty else {
                 continue
             }
-            guard let record = try? decoder.decode(UsageHistoryRecord.self, from: lineData) else {
+            guard let record = try? decoder.decode(UsageHistoryRecord.self, from: Data(line)) else {
                 continue
             }
             records.append(NumberedHistoryRecord(offset: offset, record: record))
@@ -340,7 +336,10 @@ enum LocalPersistence {
 private extension JSONEncoder {
     static func usageHistoryEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(date.formatted(PersistenceDateCoding.fractionalISO8601))
+        }
         encoder.outputFormatting = [.sortedKeys]
         return encoder
     }
@@ -349,7 +348,30 @@ private extension JSONEncoder {
 private extension JSONDecoder {
     static func usageHistoryDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let value = try container.decode(String.self)
+            if let date = try? PersistenceDateCoding.fractionalISO8601.parse(value) {
+                return date
+            }
+            if let date = try? PersistenceDateCoding.wholeSecondISO8601.parse(value) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Expected an ISO-8601 date with optional fractional seconds."
+            )
+        }
         return decoder
     }
+}
+
+private enum PersistenceDateCoding {
+    static let fractionalISO8601 = Date.ISO8601FormatStyle(
+        includingFractionalSeconds: true,
+        timeZone: TimeZone(secondsFromGMT: 0)!
+    )
+    static let wholeSecondISO8601 = Date.ISO8601FormatStyle(
+        timeZone: TimeZone(secondsFromGMT: 0)!
+    )
 }
