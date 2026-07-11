@@ -43,6 +43,7 @@
 		B10000000000000000000029 /* CodexUsageProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000029 /* CodexUsageProviderTests.swift */; };
 		B20000000000000000000040 /* UsagePresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000040 /* UsagePresentationTests.swift */; };
 		B20000000000000000000041 /* StatusItemControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000041 /* StatusItemControllerTests.swift */; };
+		B20000000000000000000099 /* StatusItemEvidenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000099 /* StatusItemEvidenceTests.swift */; };
 		B30000000000000000000003 /* UsagePollingCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000003 /* UsagePollingCoordinatorTests.swift */; };
 		B10000000000000000000027 /* AIUsageMonitorUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000027 /* AIUsageMonitorUITests.swift */; };
 		B1000000000000000000002E /* LocalHistoryStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000002E /* LocalHistoryStoreTests.swift */; };
@@ -107,6 +108,7 @@
 		A10000000000000000000029 /* CodexUsageProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexUsageProviderTests.swift; sourceTree = "<group>"; };
 		A20000000000000000000040 /* UsagePresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsagePresentationTests.swift; sourceTree = "<group>"; };
 		A20000000000000000000041 /* StatusItemControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusItemControllerTests.swift; sourceTree = "<group>"; };
+		A20000000000000000000099 /* StatusItemEvidenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusItemEvidenceTests.swift; sourceTree = "<group>"; };
 		A30000000000000000000003 /* UsagePollingCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsagePollingCoordinatorTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000027 /* AIUsageMonitorUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIUsageMonitorUITests.swift; sourceTree = "<group>"; };
 		A1000000000000000000002E /* LocalHistoryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalHistoryStoreTests.swift; sourceTree = "<group>"; };
@@ -248,6 +250,7 @@
 				A1000000000000000000002A /* UsageAnalyticsTests.swift */,
 				A20000000000000000000040 /* UsagePresentationTests.swift */,
 				A20000000000000000000041 /* StatusItemControllerTests.swift */,
+				A20000000000000000000099 /* StatusItemEvidenceTests.swift */,
 				A30000000000000000000003 /* UsagePollingCoordinatorTests.swift */,
 			);
 			path = AIUsageMonitorTests;
@@ -435,6 +438,7 @@
 				B1000000000000000000002A /* UsageAnalyticsTests.swift in Sources */,
 				B20000000000000000000040 /* UsagePresentationTests.swift in Sources */,
 				B20000000000000000000041 /* StatusItemControllerTests.swift in Sources */,
+				B20000000000000000000099 /* StatusItemEvidenceTests.swift in Sources */,
 				B30000000000000000000003 /* UsagePollingCoordinatorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
