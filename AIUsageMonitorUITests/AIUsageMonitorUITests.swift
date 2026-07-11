@@ -3,6 +3,16 @@ import XCTest
 
 @MainActor
 final class AIUsageMonitorUITests: XCTestCase {
+    private let meterRowKinds = [
+        "claudeSession",
+        "claudeWeekAll",
+        "claudeWeekFable",
+        "claudeWeekSonnet",
+        "claudeWeekHaiku",
+        "codexSession",
+        "codexWeek"
+    ]
+
     override func setUp() {
         continueAfterFailure = false
     }
@@ -83,27 +93,21 @@ final class AIUsageMonitorUITests: XCTestCase {
 
     func testEveryMeterRowOpensMatchingDetailAndBackReturnsToList() throws {
         let app = launchInteractiveFixture(scenario: "critical", historyExpanded: false)
-        defer { app.terminate() }
 
-        for kind in [
-            "claudeSession",
-            "claudeWeekAll",
-            "claudeWeekFable",
-            "claudeWeekSonnet",
-            "claudeWeekHaiku",
-            "codexSession",
-            "codexWeek"
-        ] {
+        assertAllMeterRowsExist(in: app)
+        attachHierarchy(from: app, named: "interactive-list-hierarchy")
+
+        for kind in meterRowKinds {
             let row = app.buttons["meter-row-\(kind)"]
             XCTAssertTrue(row.waitForExistence(timeout: 5), "Missing row \(kind)")
-            row.click()
+            click(row, in: app)
 
-            XCTAssertTrue(app.otherElements["meter-detail-\(kind)"].waitForExistence(timeout: 5), "Missing detail \(kind)")
-            XCTAssertTrue(app.otherElements["usage-popover-root"].exists, "Popover root should stay mounted")
+            XCTAssertTrue(element(in: app, identifier: "meter-detail-\(kind)").waitForExistence(timeout: 5), "Missing detail \(kind)")
+            XCTAssertTrue(popoverRoot(in: app).exists, "Popover root should stay mounted")
 
-            let back = app.buttons["meter-detail-back-button"]
+            let back = element(in: app, identifier: "meter-detail-back-button")
             XCTAssertTrue(back.waitForExistence(timeout: 5), "Missing back button for \(kind)")
-            back.click()
+            click(back, in: app)
             XCTAssertTrue(app.buttons["meter-row-\(kind)"].waitForExistence(timeout: 5), "Back should restore list for \(kind)")
         }
     }
@@ -159,7 +163,7 @@ final class AIUsageMonitorUITests: XCTestCase {
         let directory = evidenceDirectory(named: scenario)
         let imageURL = directory.appendingPathComponent("popover-\(scenario).png")
         let metadataURL = directory.appendingPathComponent("popover-\(scenario).txt")
-        let app = XCUIApplication()
+        let app = trackedApplication()
         XCTAssertEqual(app.state, .notRunning, "Each fixture test must begin from a clean application state")
 
         app.launchArguments = [
@@ -177,7 +181,7 @@ final class AIUsageMonitorUITests: XCTestCase {
 
         XCTAssertTrue(waitForFile(at: imageURL, timeout: 10), "Expected PNG at \(imageURL.path)")
         XCTAssertTrue(waitForFile(at: metadataURL, timeout: 10), "Expected metadata at \(metadataURL.path)")
-        XCTAssertTrue(waitForTermination(of: app, timeout: 10), "Fixture application did not terminate cleanly")
+        terminateAndWait(for: app)
 
         let metadata = try String(contentsOf: metadataURL, encoding: .utf8)
         let bitmap = try BitmapProbe(url: imageURL)
@@ -189,7 +193,7 @@ final class AIUsageMonitorUITests: XCTestCase {
     }
 
     private func launchInteractiveFixture(scenario: String, historyExpanded: Bool) -> XCUIApplication {
-        let app = XCUIApplication()
+        let app = trackedApplication()
         XCTAssertEqual(app.state, .notRunning, "Each fixture test must begin from a clean application state")
         app.launchArguments = [
             "--fixture-scenario",
@@ -200,8 +204,63 @@ final class AIUsageMonitorUITests: XCTestCase {
             app.launchArguments.append("--history-expanded")
         }
         app.launch()
-        XCTAssertTrue(app.otherElements["usage-popover-root"].waitForExistence(timeout: 5))
+        XCTAssertTrue(popoverRoot(in: app).waitForExistence(timeout: 5))
         return app
+    }
+
+    private func trackedApplication() -> XCUIApplication {
+        let app = XCUIApplication()
+        addTeardownBlock { @MainActor [app] in
+            self.terminateAndWait(for: app)
+        }
+        return app
+    }
+
+    private func popoverRoot(in app: XCUIApplication) -> XCUIElement {
+        element(in: app, identifier: "usage-popover-root")
+    }
+
+    private func element(in app: XCUIApplication, identifier: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    private func assertAllMeterRowsExist(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let missingRows = meterRowKinds.filter { !app.buttons["meter-row-\($0)"].exists }
+        XCTAssertEqual(missingRows, [], "Expected all seven meter row identifiers in the interactive hierarchy", file: file, line: line)
+    }
+
+    private func attachHierarchy(from app: XCUIApplication, named name: String) {
+        let attachment = XCTAttachment(string: app.debugDescription)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func click(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        app.activate()
+        XCTAssertEqual(app.state, .runningForeground, "Fixture app should be foreground before clicking", file: file, line: line)
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+    }
+
+    private func terminateAndWait(
+        for app: XCUIApplication,
+        timeout: TimeInterval = 10,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        if app.state != .notRunning {
+            app.terminate()
+        }
+        XCTAssertTrue(waitForTermination(of: app, timeout: timeout), "Fixture application did not terminate cleanly", file: file, line: line)
     }
 
     private func assertBaselineBitmap(

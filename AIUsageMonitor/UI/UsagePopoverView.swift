@@ -249,6 +249,8 @@ private struct ProviderUsageSection: View {
                 NoDataProviderRow(providerID: providerID)
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(providerID == .claude ? "Claude Max usage meters" : "OpenAI Codex usage meters")
         .accessibilityIdentifier("\(providerID.rawValue)-provider-section")
     }
 
@@ -652,6 +654,8 @@ private struct MeterDetailScreen: View {
                 DetailStatsView(stats: presentation.stats)
                 Spacer(minLength: 0)
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("\(presentation.title) detail")
             .accessibilityIdentifier("meter-detail-\(kind.rawValue)")
         } else {
             MissingMeterDetail(kind: kind, run: run)

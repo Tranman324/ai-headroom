@@ -200,6 +200,7 @@ final class FixtureWindowController {
         )
         window.title = "AI Usage Monitor Fixture"
         window.identifier = NSUserInterfaceItemIdentifier("usage-fixture-window")
+        window.level = .floating
         window.contentViewController = controller
         window.setContentSize(NSSize(
             width: UsagePopoverMetrics.contentWidth,
