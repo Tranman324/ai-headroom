@@ -108,9 +108,12 @@ final class ClaudeUsageProviderTests: XCTestCase {
         ])
     }
 
-    func testMissingRequiredModelLimitFailsWithoutLeakingSecrets() async {
-        let credentialJSON = credentialJSON(token: token)
-        let credentialReader = FakeClaudeCredentialReader(data: credentialJSON)
+    // Previously this asserted `.malformedResponse` when a model-scoped weekly
+    // limit was missing. The live API only returns model limits that are
+    // currently active (e.g. Fable alone), so the provider now degrades
+    // gracefully: it omits the absent model's meter instead of failing the poll.
+    func testMissingModelLimitOmitsThatMeterWithoutFailing() async throws {
+        let credentialReader = FakeClaudeCredentialReader(data: credentialJSON(token: token))
         let transport = FakeProviderHTTPTransport(responses: [
             .success(ProviderHTTPResponse(statusCode: 200, data: fullUsageJSON(omitHaiku: true)))
         ])
@@ -120,9 +123,61 @@ final class ClaudeUsageProviderTests: XCTestCase {
             clock: FixedClock(now: checkedAt)
         )
 
-        await assertProviderFailure(from: provider, code: .malformedResponse, disallowing: [
-            token,
-            String(data: credentialJSON, encoding: .utf8)!
+        let snapshot = try await provider.fetchUsageSnapshot()
+
+        XCTAssertEqual(snapshot.meters.map(\.kind), [
+            .claudeSession,
+            .claudeWeekAll,
+            .claudeWeekFable,
+            .claudeWeekSonnet
+        ])
+        XCTAssertFalse(snapshot.meters.contains { $0.kind == .claudeWeekHaiku })
+    }
+
+    func testLiveShapePercentAndNullableScopeMapsAvailableMeters() async throws {
+        let credentialReader = FakeClaudeCredentialReader(data: credentialJSON(token: token))
+        let transport = FakeProviderHTTPTransport(responses: [
+            .success(ProviderHTTPResponse(statusCode: 200, data: liveShapeUsageJSON()))
+        ])
+        let provider = ClaudeUsageProvider(
+            credentialReader: credentialReader,
+            transport: transport,
+            clock: FixedClock(now: checkedAt)
+        )
+
+        let snapshot = try await provider.fetchUsageSnapshot()
+
+        // Live payload carries only one active model-scoped weekly limit (Fable),
+        // reports usage as integer `percent`, and sets `scope: null` on the
+        // non-model limits. Session + week-all + Fable should all map.
+        XCTAssertEqual(snapshot.meters.map(\.kind), [
+            .claudeSession,
+            .claudeWeekAll,
+            .claudeWeekFable
+        ])
+        XCTAssertEqual(snapshot.meters.map(\.utilization.value), [16, 71, 93])
+        XCTAssertEqual(snapshot.health.kind, .fresh)
+    }
+
+    func testUnknownExtraModelLimitIsSkipped() async throws {
+        let credentialReader = FakeClaudeCredentialReader(data: credentialJSON(token: token))
+        let transport = FakeProviderHTTPTransport(responses: [
+            .success(ProviderHTTPResponse(statusCode: 200, data: liveShapeUsageJSON(includeUnknownModel: true)))
+        ])
+        let provider = ClaudeUsageProvider(
+            credentialReader: credentialReader,
+            transport: transport,
+            clock: FixedClock(now: checkedAt)
+        )
+
+        let snapshot = try await provider.fetchUsageSnapshot()
+
+        // An extra `weekly_scoped` entry for an unrecognized model must be
+        // ignored rather than mapped to a meter or failing the poll.
+        XCTAssertEqual(snapshot.meters.map(\.kind), [
+            .claudeSession,
+            .claudeWeekAll,
+            .claudeWeekFable
         ])
     }
 
@@ -307,6 +362,78 @@ final class ClaudeUsageProviderTests: XCTestCase {
               "scope": { "model": { "display_name": "Opus"\(nestedExtra) } }
             }
           ]\(topLevelExtra)
+        }
+        """.utf8)
+    }
+
+    // Sanitized fixture derived from a real live `oauth/usage` response: limits
+    // report integer `percent` (not `utilization`), carry `kind`/`group`/
+    // `severity`/`is_active` fields, set `scope: null` on non-model limits, and
+    // include only the single active model-scoped weekly limit (Fable). No
+    // verbatim identifiers — rounded percentages and generic timestamps only.
+    private func liveShapeUsageJSON(includeUnknownModel: Bool = false) -> Data {
+        let unknownModelLimit = includeUnknownModel ? """
+        ,{
+          "kind": "weekly_scoped",
+          "group": "weekly",
+          "percent": 40,
+          "severity": "normal",
+          "resets_at": "2026-07-12T00:00:00Z",
+          "scope": { "model": { "id": null, "display_name": "Mystery" }, "surface": null },
+          "is_active": false
+        }
+        """ : ""
+
+        return Data("""
+        {
+          "five_hour": {
+            "utilization": 16.0,
+            "resets_at": "2026-07-12T02:00:00.608522+00:00",
+            "limit_dollars": null,
+            "used_dollars": null,
+            "remaining_dollars": null
+          },
+          "seven_day": {
+            "utilization": 71.0,
+            "resets_at": "2026-07-11T23:59:59.608543+00:00",
+            "limit_dollars": null,
+            "used_dollars": null,
+            "remaining_dollars": null
+          },
+          "seven_day_opus": null,
+          "seven_day_sonnet": null,
+          "extra_usage": { "is_enabled": false, "utilization": null },
+          "limits": [
+            {
+              "kind": "session",
+              "group": "session",
+              "percent": 16,
+              "severity": "normal",
+              "resets_at": "2026-07-12T02:00:00.608522+00:00",
+              "scope": null,
+              "is_active": false
+            },
+            {
+              "kind": "weekly_all",
+              "group": "weekly",
+              "percent": 71,
+              "severity": "normal",
+              "resets_at": "2026-07-11T23:59:59.608543+00:00",
+              "scope": null,
+              "is_active": false
+            },
+            {
+              "kind": "weekly_scoped",
+              "group": "weekly",
+              "percent": 93,
+              "severity": "critical",
+              "resets_at": "2026-07-12T00:00:00.608792+00:00",
+              "scope": { "model": { "id": null, "display_name": "Fable" }, "surface": null },
+              "is_active": true
+            }\(unknownModelLimit)
+          ],
+          "spend": { "percent": 0, "enabled": false },
+          "member_dashboard_available": false
         }
         """.utf8)
     }

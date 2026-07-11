@@ -138,23 +138,32 @@ struct ClaudeUsageProvider: UsageProviderFetching {
     }
 
     private func mapUsage(_ usage: ClaudeUsageResponse) throws -> [UsageMeterSnapshot] {
-        let limitsByKind = Dictionary(grouping: usage.limits, by: { limitKind(for: $0.scope.model.displayName) })
-        let requiredLimits: [(MeterKind, ClaudeUsageLimit?)] = [
-            (.claudeWeekFable, limitsByKind[.claudeWeekFable]?.first),
-            (.claudeWeekSonnet, limitsByKind[.claudeWeekSonnet]?.first),
-            (.claudeWeekHaiku, limitsByKind[.claudeWeekHaiku]?.first)
-        ]
+        // Match each model-scoped weekly limit by its display name. Unknown or
+        // extra models (e.g. Opus) are skipped, and known models that the API
+        // omits are simply absent from the meter set rather than failing the
+        // whole poll. The UI consumes meters by looking each kind up, so a
+        // missing model degrades gracefully instead of crashing.
+        var modelLimits: [MeterKind: ClaudeUsageLimit] = [:]
+        for limit in usage.limits {
+            guard let displayName = limit.scope?.model?.displayName,
+                  let kind = limitKind(for: displayName),
+                  modelLimits[kind] == nil else {
+                continue
+            }
+            modelLimits[kind] = limit
+        }
 
         var meters: [UsageMeterSnapshot] = [
             try meter(kind: .claudeSession, window: usage.fiveHour),
             try meter(kind: .claudeWeekAll, window: usage.sevenDay)
         ]
 
-        for (kind, window) in requiredLimits {
-            guard let window else {
-                throw ProviderClientFailure.malformedResponse(provider: provider)
+        let modelOrder: [MeterKind] = [.claudeWeekFable, .claudeWeekSonnet, .claudeWeekHaiku]
+        for kind in modelOrder {
+            guard let limit = modelLimits[kind] else {
+                continue
             }
-            meters.append(try meter(kind: kind, utilization: window.utilization, resetAt: window.resetAt))
+            meters.append(try meter(kind: kind, utilization: limit.utilization, resetAt: limit.resetAt))
         }
 
         return meters
@@ -216,17 +225,32 @@ private struct ClaudeUsageWindow: Decodable {
 private struct ClaudeUsageLimit: Decodable {
     var utilization: Double
     var resetAt: Date
-    var scope: ClaudeUsageScope
+    var scope: ClaudeUsageScope?
 
     enum CodingKeys: String, CodingKey {
         case utilization
+        case percent
         case resetAt = "resets_at"
         case scope
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // The live API reports each limit's usage as `percent`; older/documented
+        // payloads used `utilization`. Accept either so both shapes decode.
+        if let percent = try container.decodeIfPresent(Double.self, forKey: .percent) {
+            utilization = percent
+        } else {
+            utilization = try container.decode(Double.self, forKey: .utilization)
+        }
+        resetAt = try container.decode(Date.self, forKey: .resetAt)
+        // `scope` is null for non-model-scoped limits (session, weekly_all).
+        scope = try container.decodeIfPresent(ClaudeUsageScope.self, forKey: .scope)
     }
 }
 
 private struct ClaudeUsageScope: Decodable {
-    var model: ClaudeUsageModel
+    var model: ClaudeUsageModel?
 }
 
 private struct ClaudeUsageModel: Decodable {
