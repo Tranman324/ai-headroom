@@ -1,0 +1,651 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B10000000000000000000010 /* AIUsageMonitorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000010 /* AIUsageMonitorApp.swift */; };
+		B10000000000000000000011 /* UsageDomain.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000011 /* UsageDomain.swift */; };
+		B10000000000000000000012 /* ProviderState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* ProviderState.swift */; };
+		B10000000000000000000013 /* Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* Settings.swift */; };
+		B10000000000000000000014 /* Navigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000014 /* Navigation.swift */; };
+		B10000000000000000000015 /* ServiceProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* ServiceProtocols.swift */; };
+		B10000000000000000000016 /* PlaceholderServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* PlaceholderServices.swift */; };
+		B10000000000000000000017 /* AppDependencies.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* AppDependencies.swift */; };
+		B10000000000000000000018 /* AppCompositionRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* AppCompositionRoot.swift */; };
+		B10000000000000000000019 /* UsageMonitorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* UsageMonitorStore.swift */; };
+		B1000000000000000000001A /* UsageMonitorFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001A /* UsageMonitorFixtures.swift */; };
+		B10000000000000000000020 /* MeterKindTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000020 /* MeterKindTests.swift */; };
+		B10000000000000000000021 /* FixtureIntegrityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000021 /* FixtureIntegrityTests.swift */; };
+		B10000000000000000000022 /* SettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000022 /* SettingsTests.swift */; };
+		B10000000000000000000023 /* ProviderStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000023 /* ProviderStateTests.swift */; };
+		B10000000000000000000024 /* CompositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000024 /* CompositionTests.swift */; };
+		B10000000000000000000025 /* UsageMonitorStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000025 /* UsageMonitorStoreTests.swift */; };
+		B10000000000000000000026 /* LifecycleContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000026 /* LifecycleContractTests.swift */; };
+		B10000000000000000000027 /* AIUsageMonitorUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000027 /* AIUsageMonitorUITests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		C10000000000000000000003 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000000000000000000000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C10000000000000000000001;
+			remoteInfo = "AI Usage Monitor";
+		};
+		C10000000000000000000007 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000000000000000000000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C10000000000000000000001;
+			remoteInfo = "AI Usage Monitor";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		A10000000000000000000009 /* AI Usage Monitor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "AI Usage Monitor.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1000000000000000000000A /* AI Usage MonitorTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "AI Usage MonitorTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1000000000000000000000B /* AI Usage MonitorUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "AI Usage MonitorUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000010 /* AIUsageMonitorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIUsageMonitorApp.swift; sourceTree = "<group>"; };
+		A10000000000000000000011 /* UsageDomain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageDomain.swift; sourceTree = "<group>"; };
+		A10000000000000000000012 /* ProviderState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderState.swift; sourceTree = "<group>"; };
+		A10000000000000000000013 /* Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Settings.swift; sourceTree = "<group>"; };
+		A10000000000000000000014 /* Navigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Navigation.swift; sourceTree = "<group>"; };
+		A10000000000000000000015 /* ServiceProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceProtocols.swift; sourceTree = "<group>"; };
+		A10000000000000000000016 /* PlaceholderServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderServices.swift; sourceTree = "<group>"; };
+		A10000000000000000000017 /* AppDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDependencies.swift; sourceTree = "<group>"; };
+		A10000000000000000000018 /* AppCompositionRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCompositionRoot.swift; sourceTree = "<group>"; };
+		A10000000000000000000019 /* UsageMonitorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMonitorStore.swift; sourceTree = "<group>"; };
+		A1000000000000000000001A /* UsageMonitorFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMonitorFixtures.swift; sourceTree = "<group>"; };
+		A10000000000000000000020 /* MeterKindTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeterKindTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000021 /* FixtureIntegrityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureIntegrityTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000022 /* SettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000023 /* ProviderStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderStateTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000024 /* CompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000025 /* UsageMonitorStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMonitorStoreTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000026 /* LifecycleContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LifecycleContractTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000027 /* AIUsageMonitorUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIUsageMonitorUITests.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		D10000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D10000000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D10000000000000000000008 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A10000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000003 /* AIUsageMonitor */,
+				A10000000000000000000008 /* AIUsageMonitorTests */,
+				A1000000000000000000000C /* AIUsageMonitorUITests */,
+				A10000000000000000000002 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A10000000000000000000002 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000009 /* AI Usage Monitor.app */,
+				A1000000000000000000000A /* AI Usage MonitorTests.xctest */,
+				A1000000000000000000000B /* AI Usage MonitorUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000003 /* AIUsageMonitor */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000010 /* AIUsageMonitorApp.swift */,
+				A10000000000000000000006 /* Composition */,
+				A10000000000000000000004 /* Domain */,
+				A10000000000000000000007 /* Fixtures */,
+				A10000000000000000000005 /* Services */,
+			);
+			path = AIUsageMonitor;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000004 /* Domain */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000011 /* UsageDomain.swift */,
+				A10000000000000000000012 /* ProviderState.swift */,
+				A10000000000000000000013 /* Settings.swift */,
+				A10000000000000000000014 /* Navigation.swift */,
+			);
+			path = Domain;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000005 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000015 /* ServiceProtocols.swift */,
+				A10000000000000000000016 /* PlaceholderServices.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000006 /* Composition */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000017 /* AppDependencies.swift */,
+				A10000000000000000000018 /* AppCompositionRoot.swift */,
+				A10000000000000000000019 /* UsageMonitorStore.swift */,
+			);
+			path = Composition;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000007 /* Fixtures */ = {
+			isa = PBXGroup;
+			children = (
+				A1000000000000000000001A /* UsageMonitorFixtures.swift */,
+			);
+			path = Fixtures;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000008 /* AIUsageMonitorTests */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000020 /* MeterKindTests.swift */,
+				A10000000000000000000021 /* FixtureIntegrityTests.swift */,
+				A10000000000000000000022 /* SettingsTests.swift */,
+				A10000000000000000000023 /* ProviderStateTests.swift */,
+				A10000000000000000000024 /* CompositionTests.swift */,
+				A10000000000000000000025 /* UsageMonitorStoreTests.swift */,
+				A10000000000000000000026 /* LifecycleContractTests.swift */,
+			);
+			path = AIUsageMonitorTests;
+			sourceTree = "<group>";
+		};
+		A1000000000000000000000C /* AIUsageMonitorUITests */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000027 /* AIUsageMonitorUITests.swift */,
+			);
+			path = AIUsageMonitorUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		C10000000000000000000001 /* AI Usage Monitor */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E10000000000000000000002 /* Build configuration list for PBXNativeTarget "AI Usage Monitor" */;
+			buildPhases = (
+				D10000000000000000000001 /* Sources */,
+				D10000000000000000000002 /* Frameworks */,
+				D10000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "AI Usage Monitor";
+			productName = "AI Usage Monitor";
+			productReference = A10000000000000000000009 /* AI Usage Monitor.app */;
+			productType = "com.apple.product-type.application";
+		};
+		C10000000000000000000002 /* AI Usage MonitorTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E10000000000000000000003 /* Build configuration list for PBXNativeTarget "AI Usage MonitorTests" */;
+			buildPhases = (
+				D10000000000000000000004 /* Sources */,
+				D10000000000000000000005 /* Frameworks */,
+				D10000000000000000000006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C10000000000000000000004 /* PBXTargetDependency */,
+			);
+			name = "AI Usage MonitorTests";
+			productName = "AI Usage MonitorTests";
+			productReference = A1000000000000000000000A /* AI Usage MonitorTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		C10000000000000000000005 /* AI Usage MonitorUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E10000000000000000000004 /* Build configuration list for PBXNativeTarget "AI Usage MonitorUITests" */;
+			buildPhases = (
+				D10000000000000000000007 /* Sources */,
+				D10000000000000000000008 /* Frameworks */,
+				D10000000000000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C10000000000000000000006 /* PBXTargetDependency */,
+			);
+			name = "AI Usage MonitorUITests";
+			productName = "AI Usage MonitorUITests";
+			productReference = A1000000000000000000000B /* AI Usage MonitorUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10000000000000000000000 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					C10000000000000000000001 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					C10000000000000000000002 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = C10000000000000000000001;
+					};
+					C10000000000000000000005 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = C10000000000000000000001;
+					};
+				};
+			};
+			buildConfigurationList = E10000000000000000000001 /* Build configuration list for PBXProject "AI Usage Monitor" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A10000000000000000000001;
+			productRefGroup = A10000000000000000000002 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				C10000000000000000000001 /* AI Usage Monitor */,
+				C10000000000000000000002 /* AI Usage MonitorTests */,
+				C10000000000000000000005 /* AI Usage MonitorUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		D10000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D10000000000000000000006 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D10000000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		D10000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B10000000000000000000010 /* AIUsageMonitorApp.swift in Sources */,
+				B10000000000000000000017 /* AppDependencies.swift in Sources */,
+				B10000000000000000000018 /* AppCompositionRoot.swift in Sources */,
+				B10000000000000000000019 /* UsageMonitorStore.swift in Sources */,
+				B10000000000000000000011 /* UsageDomain.swift in Sources */,
+				B10000000000000000000012 /* ProviderState.swift in Sources */,
+				B10000000000000000000013 /* Settings.swift in Sources */,
+				B10000000000000000000014 /* Navigation.swift in Sources */,
+				B1000000000000000000001A /* UsageMonitorFixtures.swift in Sources */,
+				B10000000000000000000015 /* ServiceProtocols.swift in Sources */,
+				B10000000000000000000016 /* PlaceholderServices.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D10000000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B10000000000000000000020 /* MeterKindTests.swift in Sources */,
+				B10000000000000000000021 /* FixtureIntegrityTests.swift in Sources */,
+				B10000000000000000000022 /* SettingsTests.swift in Sources */,
+				B10000000000000000000023 /* ProviderStateTests.swift in Sources */,
+				B10000000000000000000024 /* CompositionTests.swift in Sources */,
+				B10000000000000000000025 /* UsageMonitorStoreTests.swift in Sources */,
+				B10000000000000000000026 /* LifecycleContractTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D10000000000000000000007 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B10000000000000000000027 /* AIUsageMonitorUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		C10000000000000000000004 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C10000000000000000000001 /* AI Usage Monitor */;
+			targetProxy = C10000000000000000000003 /* PBXContainerItemProxy */;
+		};
+		C10000000000000000000006 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C10000000000000000000001 /* AI Usage Monitor */;
+			targetProxy = C10000000000000000000007 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		F10000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		F10000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		F10000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "AI Usage Monitor";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_LSUIElement = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jeremytran.aiusagemonitor;
+				PRODUCT_MODULE_NAME = AIUsageMonitor;
+				PRODUCT_NAME = "AI Usage Monitor";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		F10000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "AI Usage Monitor";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_LSUIElement = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jeremytran.aiusagemonitor;
+				PRODUCT_MODULE_NAME = AIUsageMonitor;
+				PRODUCT_NAME = "AI Usage Monitor";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		F10000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jeremytran.aiusagemonitor.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AI Usage Monitor.app/Contents/MacOS/AI Usage Monitor";
+			};
+			name = Debug;
+		};
+		F10000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jeremytran.aiusagemonitor.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AI Usage Monitor.app/Contents/MacOS/AI Usage Monitor";
+			};
+			name = Release;
+		};
+		F10000000000000000000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jeremytran.aiusagemonitor.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = "AI Usage Monitor";
+			};
+			name = Debug;
+		};
+		F10000000000000000000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jeremytran.aiusagemonitor.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = "AI Usage Monitor";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		E10000000000000000000001 /* Build configuration list for PBXProject "AI Usage Monitor" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F10000000000000000000001 /* Debug */,
+				F10000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E10000000000000000000002 /* Build configuration list for PBXNativeTarget "AI Usage Monitor" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F10000000000000000000003 /* Debug */,
+				F10000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E10000000000000000000003 /* Build configuration list for PBXNativeTarget "AI Usage MonitorTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F10000000000000000000005 /* Debug */,
+				F10000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E10000000000000000000004 /* Build configuration list for PBXNativeTarget "AI Usage MonitorUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F10000000000000000000007 /* Debug */,
+				F10000000000000000000008 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A10000000000000000000000 /* Project object */;
+}
