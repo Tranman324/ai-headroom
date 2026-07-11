@@ -4,8 +4,8 @@ enum AppCompositionRoot {
     static func production() -> AppDependencies {
         AppDependencies(
             providers: [
-                PlaceholderProviderClient(provider: .claude),
-                PlaceholderProviderClient(provider: .codex)
+                ClaudeUsageProvider(),
+                CodexUsageProvider()
             ],
             historyStore: InMemoryHistoryStore(),
             settingsStore: InMemorySettingsStore(initialSettings: .defaults),

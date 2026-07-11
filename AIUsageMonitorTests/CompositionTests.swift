@@ -18,13 +18,11 @@ final class CompositionTests: XCTestCase {
         XCTAssertEqual(snapshot.hottestBand, .critical)
     }
 
-    func testProductionCompositionUsesPlaceholderNoDataProviders() async {
+    func testProductionCompositionInstallsProviderClientsWithoutFetchingCredentials() {
         let dependencies = AppCompositionRoot.production()
-        let snapshot = await dependencies.fetchAllProviderSnapshots()
 
         XCTAssertEqual(dependencies.configuredProviders, [.claude, .codex])
-        XCTAssertEqual(snapshot.provider(.claude)?.health.kind, .noData)
-        XCTAssertEqual(snapshot.provider(.codex)?.health.kind, .noData)
-        XCTAssertTrue(snapshot.meters.isEmpty)
+        XCTAssertNotNil(dependencies.providerClient(for: .claude))
+        XCTAssertNotNil(dependencies.providerClient(for: .codex))
     }
 }

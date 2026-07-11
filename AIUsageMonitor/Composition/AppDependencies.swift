@@ -78,10 +78,15 @@ struct AppDependencies: Sendable {
         previousSnapshot: CombinedUsageSnapshot?,
         checkedAt: Date
     ) -> ProviderUsageSnapshot {
-        let sanitizedError = SanitizedProviderError(
-            code: .unknown,
-            displayMessage: "Unable to load \(provider.displayName) usage: \(error.localizedDescription)"
-        )
+        let sanitizedError: SanitizedProviderError
+        if let providerFailure = error as? ProviderClientFailure, providerFailure.provider == provider {
+            sanitizedError = providerFailure.sanitizedError
+        } else {
+            sanitizedError = SanitizedProviderError(
+                code: .unknown,
+                displayMessage: "Unable to load \(provider.displayName) usage: \(error.localizedDescription)"
+            )
+        }
         let previousProvider = previousSnapshot?.provider(provider)
         let previousMeters = previousProvider?.meters ?? []
 
