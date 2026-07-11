@@ -1,8 +1,40 @@
 import AppKit
 import SwiftUI
 
+enum UsageHistoryState: Equatable, Sendable {
+    case populated([HistorySparklineSeries])
+    case empty
+
+    var series: [HistorySparklineSeries] {
+        switch self {
+        case let .populated(series):
+            return series
+        case .empty:
+            return []
+        }
+    }
+}
+
+struct UsagePopoverConfiguration: Equatable, Sendable {
+    var history: UsageHistoryState
+
+    static let production = UsagePopoverConfiguration(history: .empty)
+    static let populatedFixture = UsagePopoverConfiguration(history: .populated(MockHistoryData.series))
+}
+
+@MainActor
+enum UsagePopoverHostFactory {
+    static func makeHostingController(
+        store: UsageMonitorStore,
+        configuration: UsagePopoverConfiguration
+    ) -> NSHostingController<UsagePopoverView> {
+        NSHostingController(rootView: UsagePopoverView(store: store, configuration: configuration))
+    }
+}
+
 struct UsagePopoverView: View {
     @ObservedObject var store: UsageMonitorStore
+    var configuration: UsagePopoverConfiguration
 
     var body: some View {
         ZStack {
@@ -26,7 +58,10 @@ struct UsagePopoverView: View {
                     capturedAt: store.snapshot.capturedAt,
                     run: run
                 )
-                HistorySection(isExpanded: store.navigation.isHistoryExpanded) {
+                HistorySection(
+                    isExpanded: store.navigation.isHistoryExpanded,
+                    history: configuration.history
+                ) {
                     run(.setHistoryExpanded(!store.navigation.isHistoryExpanded))
                 }
                 Spacer(minLength: 0)
@@ -346,6 +381,7 @@ private struct NoDataProviderRow: View {
 
 private struct HistorySection: View {
     var isExpanded: Bool
+    var history: UsageHistoryState
     var toggle: () -> Void
 
     var body: some View {
@@ -370,10 +406,42 @@ private struct HistorySection: View {
             .accessibilityIdentifier("history-toggle")
 
             if isExpanded {
-                HistorySparklineView(series: MockHistoryData.series)
-                    .frame(width: UsagePopoverMetrics.chartWidth, height: UsagePopoverMetrics.chartHeight)
+                switch history {
+                case let .populated(series):
+                    HistorySparklineView(series: series)
+                        .frame(width: UsagePopoverMetrics.chartWidth, height: UsagePopoverMetrics.chartHeight)
+                case .empty:
+                    NoHistoryView()
+                        .frame(width: UsagePopoverMetrics.chartWidth, height: 44)
+                }
             }
         }
+    }
+}
+
+private struct NoHistoryView: View {
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "clock")
+                .font(.system(size: 11, weight: .medium))
+                .accessibilityHidden(true)
+
+            Text("No history")
+                .font(.system(size: 11, weight: .medium))
+
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+        .background(UsagePalette.inset.swiftUIColor.opacity(0.78))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(Color.white.opacity(0.07), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("No history")
+        .accessibilityIdentifier("history-empty-state")
     }
 }
 
@@ -501,8 +569,10 @@ private struct VisualEffectBackdrop: NSViewRepresentable {
 
 private struct UsagePopoverFixturePreview: View {
     @StateObject private var store: UsageMonitorStore
+    private let configuration: UsagePopoverConfiguration
 
     init(snapshot: CombinedUsageSnapshot) {
+        configuration = snapshot.meters.isEmpty ? .production : .populatedFixture
         _store = StateObject(
             wrappedValue: UsageMonitorStore(
                 dependencies: AppCompositionRoot.fixture(snapshot: snapshot),
@@ -513,7 +583,7 @@ private struct UsagePopoverFixturePreview: View {
     }
 
     var body: some View {
-        UsagePopoverView(store: store)
+        UsagePopoverView(store: store, configuration: configuration)
     }
 }
 

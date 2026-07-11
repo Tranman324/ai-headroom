@@ -25,6 +25,13 @@ final class FixtureIntegrityTests: XCTestCase {
         XCTAssertTrue(UsageMonitorFixtures.noDataSnapshot.meters.isEmpty)
     }
 
+    func testNoDataFixtureOwnsEmptyHistoryWhilePopulatedFixturesUseTypedSeries() {
+        XCTAssertEqual(UsageFixtureScenario.noData.popoverConfiguration.history, .empty)
+        XCTAssertTrue(UsageFixtureScenario.noData.popoverConfiguration.history.series.isEmpty)
+        XCTAssertEqual(UsageFixtureScenario.critical.popoverConfiguration.history.series.count, 4)
+        XCTAssertEqual(UsageFixtureScenario.normal.popoverConfiguration.history.series, MockHistoryData.series)
+    }
+
     func testFixturesContainNoCredentialShapedSecrets() throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601

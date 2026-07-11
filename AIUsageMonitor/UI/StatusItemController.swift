@@ -5,23 +5,36 @@ import SwiftUI
 enum StatusItemClickAction: Equatable {
     case togglePopover
     case showContextMenu
-    case ignore
 }
 
-enum StatusItemClickRouter {
-    static func action(for event: NSEvent?) -> StatusItemClickAction {
-        guard let event else {
-            return .togglePopover
-        }
+final class StatusItemEventView: NSView {
+    var onAction: (StatusItemClickAction) -> Void
 
-        switch event.type {
-        case .leftMouseUp:
-            return .togglePopover
-        case .rightMouseUp:
-            return .showContextMenu
-        default:
-            return .ignore
-        }
+    init(onAction: @escaping (StatusItemClickAction) -> Void) {
+        self.onAction = onAction
+        super.init(frame: .zero)
+        identifier = NSUserInterfaceItemIdentifier("status-item-event-view")
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func mouseDown(with event: NSEvent) {}
+
+    override func rightMouseDown(with event: NSEvent) {}
+
+    override func mouseUp(with event: NSEvent) {
+        onAction(.togglePopover)
+    }
+
+    override func rightMouseUp(with event: NSEvent) {
+        onAction(.showContextMenu)
     }
 }
 
@@ -86,13 +99,16 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private let store: UsageMonitorStore
     private let statusBar: NSStatusBar
     private let statusItem: NSStatusItem
-    private let popover: NSPopover
+    private(set) var popover: NSPopover
+    private(set) var eventView: StatusItemEventView?
     private let now: () -> Date
+    private let popoverConfiguration: UsagePopoverConfiguration
     private var cancellables: Set<AnyCancellable> = []
 
     init(
         store: UsageMonitorStore,
         statusBar: NSStatusBar = .system,
+        popoverConfiguration: UsagePopoverConfiguration = .production,
         now: @escaping () -> Date = Date.init
     ) {
         self.store = store
@@ -100,6 +116,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         self.statusItem = statusBar.statusItem(withLength: NSStatusItem.variableLength)
         self.popover = NSPopover()
         self.now = now
+        self.popoverConfiguration = popoverConfiguration
         super.init()
 
         configureButton()
@@ -109,17 +126,17 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     deinit {
-        statusBar.removeStatusItem(statusItem)
+        MainActor.assumeIsolated {
+            statusBar.removeStatusItem(statusItem)
+        }
     }
 
-    @objc func statusButtonActivated(_ sender: Any?) {
-        switch StatusItemClickRouter.action(for: NSApp.currentEvent) {
+    func handleStatusItemAction(_ action: StatusItemClickAction) {
+        switch action {
         case .togglePopover:
             togglePopover()
         case .showContextMenu:
             showContextMenu()
-        case .ignore:
-            break
         }
     }
 
@@ -149,9 +166,19 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             return
         }
 
-        button.target = self
-        button.action = #selector(statusButtonActivated(_:))
-        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        let eventView = StatusItemEventView { [weak self] action in
+            self?.handleStatusItemAction(action)
+        }
+        eventView.translatesAutoresizingMaskIntoConstraints = false
+        button.addSubview(eventView, positioned: .above, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            eventView.leadingAnchor.constraint(equalTo: button.leadingAnchor),
+            eventView.trailingAnchor.constraint(equalTo: button.trailingAnchor),
+            eventView.topAnchor.constraint(equalTo: button.topAnchor),
+            eventView.bottomAnchor.constraint(equalTo: button.bottomAnchor)
+        ])
+        self.eventView = eventView
+
         button.imagePosition = .imageLeading
         button.isBordered = false
         button.wantsLayer = true
@@ -166,7 +193,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             width: UsagePopoverMetrics.contentWidth,
             height: UsagePopoverMetrics.contentHeight
         )
-        popover.contentViewController = NSHostingController(rootView: UsagePopoverView(store: store))
+        popover.contentViewController = UsagePopoverHostFactory.makeHostingController(
+            store: store,
+            configuration: popoverConfiguration
+        )
         popover.delegate = self
     }
 

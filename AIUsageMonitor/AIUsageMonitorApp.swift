@@ -25,7 +25,10 @@ final class AIUsageMonitorAppDelegate: NSObject, NSApplicationDelegate {
     private var fixtureWindowController: FixtureWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItemController = StatusItemController(store: store)
+        statusItemController = StatusItemController(
+            store: store,
+            popoverConfiguration: launchConfiguration.popoverConfiguration
+        )
 
         if launchConfiguration.shouldOpenFixtureWindow {
             NSApp.setActivationPolicy(.regular)

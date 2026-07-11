@@ -1,5 +1,4 @@
 import AppKit
-import CoreGraphics
 import SwiftUI
 
 enum UsageFixtureScenario: String, CaseIterable, Sendable {
@@ -24,6 +23,15 @@ enum UsageFixtureScenario: String, CaseIterable, Sendable {
             return UsageMonitorFixtures.providerErrorOtherHealthySnapshot
         case .noData:
             return UsageMonitorFixtures.noDataSnapshot
+        }
+    }
+
+    var popoverConfiguration: UsagePopoverConfiguration {
+        switch self {
+        case .noData:
+            return .production
+        case .normal, .warning, .critical, .stale, .error:
+            return .populatedFixture
         }
     }
 
@@ -81,6 +89,10 @@ struct FixtureLaunchConfiguration {
         AppNavigationState(isHistoryExpanded: startsWithHistoryExpanded)
     }
 
+    var popoverConfiguration: UsagePopoverConfiguration {
+        scenario?.popoverConfiguration ?? .production
+    }
+
     private static func value(after flag: String, in arguments: [String]) -> String? {
         guard let index = arguments.firstIndex(of: flag) else {
             return nil
@@ -103,7 +115,10 @@ final class FixtureWindowController {
         self.store = store
         self.configuration = configuration
 
-        let controller = NSHostingController(rootView: UsagePopoverView(store: store))
+        let controller = UsagePopoverHostFactory.makeHostingController(
+            store: store,
+            configuration: configuration.popoverConfiguration
+        )
         self.window = NSWindow(
             contentRect: NSRect(
                 x: 0,
@@ -133,71 +148,87 @@ final class FixtureWindowController {
             return
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [configuration, store, window] in
-            FixtureEvidenceWriter.writeWindowScreenshot(
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [configuration, store, window] in
+            try? FixtureEvidenceWriter.writeWindowScreenshot(
                 window,
                 scenario: configuration.scenario,
                 snapshot: store.snapshot,
                 navigation: store.navigation,
+                history: configuration.popoverConfiguration.history,
                 directory: screenshotDirectory
             )
 
-            if configuration.shouldTerminateAfterScreenshot {
+            guard configuration.shouldTerminateAfterScreenshot else {
+                return
+            }
+            window.orderOut(nil)
+            DispatchQueue.main.async {
                 NSApp.terminate(nil)
             }
         }
     }
 }
 
+@MainActor
 private enum FixtureEvidenceWriter {
     static func writeWindowScreenshot(
         _ window: NSWindow,
         scenario: UsageFixtureScenario?,
         snapshot: CombinedUsageSnapshot,
         navigation: AppNavigationState,
+        history: UsageHistoryState,
         directory: URL
-    ) {
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            guard let bitmap = windowBitmap(window) else {
-                return
-            }
-
-            let scenarioName = scenario?.rawValue ?? "production"
-            let imageURL = directory.appendingPathComponent("popover-\(scenarioName).png")
-            let metadataURL = directory.appendingPathComponent("popover-\(scenarioName).txt")
-            let data = bitmap.representation(using: .png, properties: [:])
-            try data?.write(to: imageURL, options: .atomic)
-
-            let metadata = """
-            scenario: \(scenarioName)
-            content_points: \(Int(UsagePopoverMetrics.contentWidth))x\(Int(UsagePopoverMetrics.contentHeight))
-            pixels: \(bitmap.pixelsWide)x\(bitmap.pixelsHigh)
-            status_band: \(snapshot.hottestBand.rawValue)
-            hottest_percent: \(hottestPercentText(snapshot))
-            meter_order: \(meterOrder(snapshot).joined(separator: ","))
-            provider_health: \(providerHealth(snapshot).joined(separator: ","))
-            no_data_providers: \(noDataProviders(snapshot).joined(separator: ","))
-            navigation: \(navigationState(navigation))
-            secret_free_fixture: true
-            """
-            try metadata.write(to: metadataURL, atomically: true, encoding: .utf8)
-        } catch {
-            return
+    ) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        guard let bitmap = windowBitmap(window),
+              let data = bitmap.representation(using: .png, properties: [:]) else {
+            throw FixtureEvidenceError.bitmapUnavailable
         }
+
+        let scenarioName = scenario?.rawValue ?? "production"
+        let imageURL = directory.appendingPathComponent("popover-\(scenarioName).png")
+        let metadataURL = directory.appendingPathComponent("popover-\(scenarioName).txt")
+        try data.write(to: imageURL, options: .atomic)
+
+        let metadata = """
+        scenario: \(scenarioName)
+        content_points: \(Int(UsagePopoverMetrics.contentWidth))x\(Int(UsagePopoverMetrics.contentHeight))
+        pixels: \(bitmap.pixelsWide)x\(bitmap.pixelsHigh)
+        status_band: \(snapshot.hottestBand.rawValue)
+        hottest_percent: \(hottestPercentText(snapshot))
+        meter_order: \(meterOrder(snapshot).joined(separator: ","))
+        provider_health: \(providerHealth(snapshot).joined(separator: ","))
+        no_data_providers: \(noDataProviders(snapshot).joined(separator: ","))
+        history_state: \(history.series.isEmpty ? "empty" : "populated")
+        history_series_count: \(history.series.count)
+        navigation: \(navigationState(navigation))
+        secret_free_fixture: true
+        """
+        try metadata.write(to: metadataURL, atomically: true, encoding: .utf8)
     }
 
     private static func windowBitmap(_ window: NSWindow) -> NSBitmapImageRep? {
-        guard let contentView = window.contentView,
-              let bitmap = contentView.bitmapImageRepForCachingDisplay(in: contentView.bounds) else {
-            if let image = CGWindowListCreateImage(
-                .null,
-                .optionIncludingWindow,
-                CGWindowID(window.windowNumber),
-                [.bestResolution, .boundsIgnoreFraming]
-            ) {
-                return NSBitmapImageRep(cgImage: image)
-            }
+        guard let contentView = window.contentView else {
+            return nil
+        }
+
+        contentView.layoutSubtreeIfNeeded()
+        contentView.displayIfNeeded()
+
+        let scale: CGFloat = 2
+        let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(contentView.bounds.width * scale),
+            pixelsHigh: Int(contentView.bounds.height * scale),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        )
+        guard let bitmap else {
             return nil
         }
         bitmap.size = contentView.bounds.size
@@ -242,4 +273,8 @@ private enum FixtureEvidenceWriter {
             return "detail \(kind.rawValue)"
         }
     }
+}
+
+private enum FixtureEvidenceError: Error {
+    case bitmapUnavailable
 }
