@@ -24,6 +24,24 @@ struct SanitizedProviderError: Codable, Equatable, Sendable {
         self.displayMessage = Self.redacted(displayMessage)
     }
 
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let code = try container.decode(ProviderErrorCode.self, forKey: .code)
+        let displayMessage = try container.decode(String.self, forKey: .displayMessage)
+        self.init(code: code, displayMessage: displayMessage)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(code, forKey: .code)
+        try container.encode(displayMessage, forKey: .displayMessage)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case code
+        case displayMessage
+    }
+
     static func redacted(_ message: String) -> String {
         var sanitized = message
         let replacements = [

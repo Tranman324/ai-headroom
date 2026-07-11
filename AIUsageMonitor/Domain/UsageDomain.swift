@@ -125,6 +125,21 @@ struct UtilizationPercentage: Codable, Equatable, Comparable, Sendable {
         self.value = value
     }
 
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let value = try container.decode(Double.self, forKey: .value)
+        try self.init(value)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(value, forKey: .value)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case value
+    }
+
     var statusBand: UsageStatusBand {
         if value >= UsageStatusBand.criticalLowerBound {
             return .critical

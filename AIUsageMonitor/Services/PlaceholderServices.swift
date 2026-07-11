@@ -21,22 +21,62 @@ struct FixtureProviderClient: UsageProviderFetching {
 }
 
 actor InMemoryHistoryStore: HistoryStoring {
-    private var storedSnapshots: [CombinedUsageSnapshot]
+    private var storedRecords: [UsageHistoryRecord]
 
     init(initialSnapshots: [CombinedUsageSnapshot] = []) {
-        self.storedSnapshots = initialSnapshots
+        self.storedRecords = initialSnapshots.map { .combinedSnapshot(CombinedSnapshotHistoryRecord(snapshot: $0)) }
     }
 
     func append(_ snapshot: CombinedUsageSnapshot) async throws {
-        storedSnapshots.append(snapshot)
+        storedRecords.append(.combinedSnapshot(CombinedSnapshotHistoryRecord(snapshot: snapshot)))
+    }
+
+    func appendProviderSnapshot(_ snapshot: ProviderUsageSnapshot, capturedAt: Date) async throws {
+        storedRecords.append(.providerSnapshot(ProviderSnapshotHistoryRecord(capturedAt: capturedAt, snapshot: snapshot)))
+    }
+
+    func appendProviderFailure(provider: ProviderID, at timestamp: Date, error: SanitizedProviderError) async throws {
+        storedRecords.append(.providerFailure(ProviderFailureHistoryRecord(timestamp: timestamp, provider: provider, error: error)))
+    }
+
+    func records(since startDate: Date) async throws -> [UsageHistoryRecord] {
+        storedRecords
+            .filter { $0.timestamp >= startDate }
+            .sorted { lhs, rhs in
+                lhs.timestamp < rhs.timestamp
+            }
     }
 
     func snapshots(since startDate: Date) async throws -> [CombinedUsageSnapshot] {
-        storedSnapshots.filter { $0.capturedAt >= startDate }
+        try await records(since: startDate).compactMap { record in
+            if case let .combinedSnapshot(snapshotRecord) = record {
+                return snapshotRecord.snapshot
+            }
+            return nil
+        }
+    }
+
+    func latestUsableProviderSnapshots() async throws -> [ProviderID: ProviderUsageSnapshot] {
+        var latestByProvider: [ProviderID: ProviderUsageSnapshot] = [:]
+        for record in try await records(since: .distantPast) {
+            switch record {
+            case let .combinedSnapshot(snapshotRecord):
+                for providerSnapshot in snapshotRecord.snapshot.providers where providerSnapshot.hasLastKnownGoodData {
+                    latestByProvider[providerSnapshot.provider] = providerSnapshot
+                }
+            case let .providerSnapshot(snapshotRecord):
+                if snapshotRecord.snapshot.hasLastKnownGoodData {
+                    latestByProvider[snapshotRecord.provider] = snapshotRecord.snapshot
+                }
+            case .providerFailure:
+                continue
+            }
+        }
+        return latestByProvider
     }
 
     func prune(olderThan cutoffDate: Date) async throws {
-        storedSnapshots.removeAll { $0.capturedAt < cutoffDate }
+        storedRecords.removeAll { $0.timestamp < cutoffDate }
     }
 }
 
