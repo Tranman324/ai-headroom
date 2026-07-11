@@ -16,7 +16,11 @@ enum AppCompositionRoot {
         )
     }
 
-    static func fixture(snapshot: CombinedUsageSnapshot = UsageMonitorFixtures.criticalSnapshot) -> AppDependencies {
+    static func fixture(
+        snapshot: CombinedUsageSnapshot = UsageMonitorFixtures.criticalSnapshot,
+        historySnapshots: [CombinedUsageSnapshot]? = nil,
+        settings: MonitorSettings = .defaults
+    ) -> AppDependencies {
         let providers = ProviderID.allCases.compactMap { provider -> FixtureProviderClient? in
             guard let providerSnapshot = snapshot.provider(provider) else {
                 return nil
@@ -26,8 +30,8 @@ enum AppCompositionRoot {
 
         return AppDependencies(
             providers: providers,
-            historyStore: InMemoryHistoryStore(initialSnapshots: [snapshot]),
-            settingsStore: InMemorySettingsStore(initialSettings: .defaults),
+            historyStore: InMemoryHistoryStore(initialSnapshots: historySnapshots ?? [snapshot]),
+            settingsStore: InMemorySettingsStore(initialSettings: settings),
             clock: FixedClock(now: snapshot.capturedAt),
             connectivityMonitor: StaticConnectivityMonitor(state: .online),
             lifecycleEvents: NoopLifecycleEvents(),

@@ -1,25 +1,9 @@
 import AppKit
 import SwiftUI
 
-enum UsageHistoryState: Equatable, Sendable {
-    case populated([HistorySparklineSeries])
-    case empty
-
-    var series: [HistorySparklineSeries] {
-        switch self {
-        case let .populated(series):
-            return series
-        case .empty:
-            return []
-        }
-    }
-}
-
 struct UsagePopoverConfiguration: Equatable, Sendable {
-    var history: UsageHistoryState
-
-    static let production = UsagePopoverConfiguration(history: .empty)
-    static let populatedFixture = UsagePopoverConfiguration(history: .populated(MockHistoryData.series))
+    static let production = UsagePopoverConfiguration()
+    static let populatedFixture = UsagePopoverConfiguration()
 }
 
 @MainActor
@@ -36,38 +20,16 @@ struct UsagePopoverView: View {
     @ObservedObject var store: UsageMonitorStore
     var configuration: UsagePopoverConfiguration
 
+    @State private var historyLoadingTask: Task<Void, Never>?
+
     var body: some View {
         ZStack {
             VisualEffectBackdrop()
             UsagePalette.warmCharcoal.swiftUIColor.opacity(0.88)
 
-            VStack(spacing: 10) {
-                header
-                separator
-                ProviderUsageSection(
-                    providerID: .claude,
-                    provider: store.snapshot.provider(.claude),
-                    orderedKinds: UsageMeterOrder.claude,
-                    capturedAt: store.snapshot.capturedAt,
-                    run: run
-                )
-                ProviderUsageSection(
-                    providerID: .codex,
-                    provider: store.snapshot.provider(.codex),
-                    orderedKinds: UsageMeterOrder.codex,
-                    capturedAt: store.snapshot.capturedAt,
-                    run: run
-                )
-                HistorySection(
-                    isExpanded: store.navigation.isHistoryExpanded,
-                    history: configuration.history
-                ) {
-                    run(.setHistoryExpanded(!store.navigation.isHistoryExpanded))
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, UsagePopoverMetrics.horizontalPadding)
-            .padding(.vertical, 12)
+            content
+                .padding(.horizontal, UsagePopoverMetrics.horizontalPadding)
+                .padding(.vertical, 10)
 
             Color.clear
                 .frame(width: 1, height: 1)
@@ -83,6 +45,96 @@ struct UsagePopoverView: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("usage-popover-root")
+        .onAppear(perform: scheduleHistoryLoad)
+        .onChange(of: store.snapshot.capturedAt) { _, _ in
+            scheduleHistoryLoad()
+        }
+        .onDisappear {
+            historyLoadingTask?.cancel()
+            historyLoadingTask = nil
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if store.navigation.isSettingsPresented {
+            SettingsPopoverScreen(settings: store.settings, run: run)
+        } else {
+            switch store.navigation.meterRoute {
+            case .list:
+                UsageListScreen(store: store, run: run)
+            case let .detail(kind):
+                MeterDetailScreen(store: store, kind: kind, run: run)
+            }
+        }
+    }
+
+    private var accessibilityState: String {
+        if store.navigation.isSettingsPresented {
+            return "settings"
+        }
+
+        switch store.navigation.meterRoute {
+        case .list:
+            return store.navigation.isHistoryExpanded ? "list history-expanded" : "list history-collapsed"
+        case let .detail(kind):
+            return "detail \(kind.rawValue) range \(effectiveRange(for: kind).rawValue)"
+        }
+    }
+
+    private func effectiveRange(for kind: MeterKind) -> MeterDetailRange {
+        kind.window == .rollingFiveHours ? .twentyFourHours : store.navigation.detailRange
+    }
+
+    private func scheduleHistoryLoad() {
+        historyLoadingTask?.cancel()
+        let startDate = store.snapshot.capturedAt.addingTimeInterval(-UsagePresentation.historyLookback)
+        historyLoadingTask = Task { @MainActor in
+            await store.loadHistory(since: startDate)
+        }
+    }
+
+    private func run(_ command: AppIntentCommand) {
+        Task { @MainActor in
+            try? await store.handle(command)
+        }
+    }
+}
+
+private struct UsageListScreen: View {
+    @ObservedObject var store: UsageMonitorStore
+    var run: (AppIntentCommand) -> Void
+
+    var body: some View {
+        VStack(spacing: 8) {
+            header
+            separator
+            ProviderUsageSection(
+                providerID: .claude,
+                provider: store.snapshot.provider(.claude),
+                orderedKinds: UsageMeterOrder.claude,
+                capturedAt: store.snapshot.capturedAt,
+                run: run
+            )
+            ProviderUsageSection(
+                providerID: .codex,
+                provider: store.snapshot.provider(.codex),
+                orderedKinds: UsageMeterOrder.codex,
+                capturedAt: store.snapshot.capturedAt,
+                run: run
+            )
+            HistorySection(
+                isExpanded: store.navigation.isHistoryExpanded,
+                series: UsagePresentation.historySeries(
+                    from: store.historicalSnapshots,
+                    now: store.snapshot.capturedAt
+                ),
+                loadState: store.historyLoadState
+            ) {
+                run(.setHistoryExpanded(!store.navigation.isHistoryExpanded))
+            }
+            Spacer(minLength: 0)
+        }
     }
 
     private var header: some View {
@@ -126,20 +178,6 @@ struct UsagePopoverView: View {
             .frame(height: 1)
     }
 
-    private var accessibilityState: String {
-        switch store.navigation.meterRoute {
-        case .list:
-            return store.navigation.isHistoryExpanded ? "list history-expanded" : "list history-collapsed"
-        case let .detail(kind):
-            return "detail \(kind.rawValue)"
-        }
-    }
-
-    private func run(_ command: AppIntentCommand) {
-        Task { @MainActor in
-            try? await store.handle(command)
-        }
-    }
 }
 
 private struct ProviderUsageSection: View {
@@ -152,18 +190,24 @@ private struct ProviderUsageSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text(providerID.displayName)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
+                Circle()
+                    .fill(UsagePalette.accent(for: providerID).swiftUIColor)
+                    .frame(width: 7, height: 7)
+                    .accessibilityHidden(true)
+
+                Text(providerID == .claude ? "CLAUDE MAX" : "OPENAI CODEX")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(UsagePalette.allModels.swiftUIColor)
+                    .tracking(1.1)
 
                 if providerID == .codex {
                     Text("Pro")
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(UsagePalette.codexAccent.swiftUIColor)
                         .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
+                        .padding(.vertical, 1.5)
                         .background(
-                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            Capsule()
                                 .stroke(UsagePalette.codexAccent.swiftUIColor.opacity(0.42), lineWidth: 1)
                         )
                         .accessibilityIdentifier("codex-plan-badge")
@@ -381,24 +425,31 @@ private struct NoDataProviderRow: View {
 
 private struct HistorySection: View {
     var isExpanded: Bool
-    var history: UsageHistoryState
+    var series: [HistorySparklineSeries]
+    var loadState: HistoryLoadState
     var toggle: () -> Void
 
     var body: some View {
         VStack(spacing: 7) {
             Button(action: toggle) {
-                HStack(spacing: 6) {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .frame(width: 12)
+                HStack(spacing: 7) {
+                    Image(systemName: "chart.xyaxis.line")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
                         .accessibilityHidden(true)
 
                     Text("7-day history")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(UsagePalette.allModels.swiftUIColor)
 
                     Spacer()
+
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .rotationEffect(.degrees(isExpanded ? 0 : -90))
+                        .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+                        .accessibilityHidden(true)
                 }
-                .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -406,27 +457,39 @@ private struct HistorySection: View {
             .accessibilityIdentifier("history-toggle")
 
             if isExpanded {
-                switch history {
-                case let .populated(series):
-                    HistorySparklineView(series: series)
-                        .frame(width: UsagePopoverMetrics.chartWidth, height: UsagePopoverMetrics.chartHeight)
-                case .empty:
-                    NoHistoryView()
+                if series.isEmpty {
+                    NoHistoryView(message: emptyMessage)
                         .frame(width: UsagePopoverMetrics.chartWidth, height: 44)
+                } else {
+                    VStack(spacing: 5) {
+                        HistorySparklineView(series: series)
+                            .frame(width: UsagePopoverMetrics.chartWidth, height: UsagePopoverMetrics.chartHeight)
+                        HistoryLegendView(series: series)
+                    }
+                    .accessibilityIdentifier("history-expanded-content")
                 }
             }
         }
     }
+
+    private var emptyMessage: String {
+        if case .failed = loadState {
+            return "History unavailable"
+        }
+        return "No history"
+    }
 }
 
 private struct NoHistoryView: View {
+    var message: String
+
     var body: some View {
         HStack(spacing: 7) {
             Image(systemName: "clock")
                 .font(.system(size: 11, weight: .medium))
                 .accessibilityHidden(true)
 
-            Text("No history")
+            Text(message)
                 .font(.system(size: 11, weight: .medium))
 
             Spacer()
@@ -440,50 +503,9 @@ private struct NoHistoryView: View {
                 .stroke(Color.white.opacity(0.07), lineWidth: 1)
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("No history")
+        .accessibilityLabel(message)
         .accessibilityIdentifier("history-empty-state")
     }
-}
-
-struct HistorySparklinePoint: Equatable, Sendable {
-    var dayIndex: Int
-    var utilization: Double
-}
-
-struct HistorySparklineSeries: Identifiable, Equatable, Sendable {
-    var id: String
-    var color: NSColor
-    var isDashed: Bool
-    var points: [HistorySparklinePoint]
-}
-
-enum MockHistoryData {
-    static let series: [HistorySparklineSeries] = [
-        HistorySparklineSeries(
-            id: "All Models",
-            color: UsagePalette.allModels,
-            isDashed: true,
-            points: [42, 51, 58, 66, 71, 64, 76].enumerated().map { HistorySparklinePoint(dayIndex: $0.offset, utilization: Double($0.element)) }
-        ),
-        HistorySparklineSeries(
-            id: "Fable",
-            color: UsagePalette.claudeAccent,
-            isDashed: false,
-            points: [34, 45, 57, 63, 83, 72, 79].enumerated().map { HistorySparklinePoint(dayIndex: $0.offset, utilization: Double($0.element)) }
-        ),
-        HistorySparklineSeries(
-            id: "Sonnet",
-            color: UsagePalette.sonnet,
-            isDashed: false,
-            points: [18, 24, 36, 38, 42, 41, 46].enumerated().map { HistorySparklinePoint(dayIndex: $0.offset, utilization: Double($0.element)) }
-        ),
-        HistorySparklineSeries(
-            id: "Haiku",
-            color: UsagePalette.haiku,
-            isDashed: false,
-            points: [8, 12, 17, 11, 14, 12, 16].enumerated().map { HistorySparklinePoint(dayIndex: $0.offset, utilization: Double($0.element)) }
-        )
-    ]
 }
 
 private struct HistorySparklineView: View {
@@ -491,22 +513,27 @@ private struct HistorySparklineView: View {
 
     var body: some View {
         Canvas { context, size in
-            let baseline = Path(CGRect(origin: .zero, size: size))
-            context.stroke(baseline, with: .color(Color.white.opacity(0.05)), lineWidth: 1)
+            let allPoints = series.flatMap(\.points)
+            guard let firstDate = allPoints.map(\.capturedAt).min(),
+                  let lastDate = allPoints.map(\.capturedAt).max(),
+                  firstDate < lastDate else {
+                return
+            }
 
-            var resetMarker = Path()
-            let resetX = size.width * 0.78
-            resetMarker.move(to: CGPoint(x: resetX, y: 0))
-            resetMarker.addLine(to: CGPoint(x: resetX, y: size.height))
-            context.stroke(resetMarker, with: .color(Color.white.opacity(0.18)), style: StrokeStyle(lineWidth: 1, dash: [3, 4]))
+            drawGrid(in: &context, size: size)
+            drawResetMarkers(in: &context, size: size, points: allPoints, firstDate: firstDate, lastDate: lastDate)
 
             for item in series {
                 var path = Path()
-                for point in item.points {
-                    let x = CGFloat(point.dayIndex) / 6 * size.width
-                    let y = size.height - CGFloat(min(100, max(0, point.utilization)) / 100) * size.height
-                    let cgPoint = CGPoint(x: x, y: y)
-                    if point.dayIndex == 0 {
+                var didStart = false
+                for (index, point) in item.points.enumerated() {
+                    let cgPoint = pointPosition(point, size: size, firstDate: firstDate, lastDate: lastDate)
+                    if !didStart {
+                        path.move(to: cgPoint)
+                        didStart = true
+                    } else if point.preservesResetDiscontinuity,
+                              index > 0,
+                              point.utilization < item.points[index - 1].utilization {
                         path.move(to: cgPoint)
                     } else {
                         path.addLine(to: cgPoint)
@@ -514,8 +541,8 @@ private struct HistorySparklineView: View {
                 }
 
                 let style = item.isDashed
-                    ? StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round, dash: [5, 4])
-                    : StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round)
+                    ? StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round, dash: [1, 2.5])
+                    : StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round)
                 context.stroke(path, with: .color(item.color.swiftUIColor), style: style)
             }
         }
@@ -527,6 +554,684 @@ private struct HistorySparklineView: View {
         )
         .accessibilityElement(children: .ignore)
         .accessibilityIdentifier("history-chart")
+    }
+
+    private func drawGrid(in context: inout GraphicsContext, size: CGSize) {
+        for fraction in [0.25, 0.5, 0.75] {
+            var path = Path()
+            let y = size.height * fraction
+            path.move(to: CGPoint(x: 0, y: y))
+            path.addLine(to: CGPoint(x: size.width, y: y))
+            context.stroke(path, with: .color(Color.white.opacity(0.05)), lineWidth: 1)
+        }
+    }
+
+    private func drawResetMarkers(
+        in context: inout GraphicsContext,
+        size: CGSize,
+        points: [HistorySparklinePoint],
+        firstDate: Date,
+        lastDate: Date
+    ) {
+        let resetDates = Array(Set(points.filter(\.preservesResetDiscontinuity).map(\.capturedAt))).sorted()
+        for date in resetDates.prefix(3) {
+            let x = xPosition(for: date, width: size.width, firstDate: firstDate, lastDate: lastDate)
+            var marker = Path()
+            marker.move(to: CGPoint(x: x, y: 8))
+            marker.addLine(to: CGPoint(x: x, y: size.height - 5))
+            context.stroke(marker, with: .color(UsagePalette.mutedText.swiftUIColor.opacity(0.55)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+        }
+    }
+
+    private func pointPosition(
+        _ point: HistorySparklinePoint,
+        size: CGSize,
+        firstDate: Date,
+        lastDate: Date
+    ) -> CGPoint {
+        CGPoint(
+            x: xPosition(for: point.capturedAt, width: size.width, firstDate: firstDate, lastDate: lastDate),
+            y: yPosition(for: point.utilization, height: size.height)
+        )
+    }
+
+    private func xPosition(for date: Date, width: CGFloat, firstDate: Date, lastDate: Date) -> CGFloat {
+        let denominator = max(1, lastDate.timeIntervalSince(firstDate))
+        return CGFloat(date.timeIntervalSince(firstDate) / denominator) * width
+    }
+
+    private func yPosition(for value: Double, height: CGFloat) -> CGFloat {
+        height - CGFloat(min(100, max(0, value)) / 100) * (height - 10) - 5
+    }
+}
+
+private struct HistoryLegendView: View {
+    var series: [HistorySparklineSeries]
+
+    var body: some View {
+        HStack(spacing: 9) {
+            ForEach(series) { item in
+                HStack(spacing: 4) {
+                    Capsule()
+                        .fill(item.color.swiftUIColor)
+                        .frame(width: 8, height: 3)
+                    Text(item.title)
+                        .font(.system(size: 9, weight: .regular))
+                        .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(width: UsagePopoverMetrics.chartWidth, height: 12)
+        .accessibilityIdentifier("history-legend")
+    }
+}
+
+private struct MeterDetailScreen: View {
+    @ObservedObject var store: UsageMonitorStore
+    var kind: MeterKind
+    var run: (AppIntentCommand) -> Void
+
+    var body: some View {
+        if let presentation = UsagePresentation.detailPresentation(
+            kind: kind,
+            snapshot: store.snapshot,
+            historicalSnapshots: store.historicalSnapshots,
+            range: effectiveRange
+        ) {
+            VStack(spacing: 10) {
+                detailHeader(presentation)
+                detailHero(presentation)
+                ProjectionBanner(presentation: presentation)
+                if presentation.showsRangeSelector {
+                    RangeSelector(selectedRange: presentation.range, run: run)
+                }
+                DetailTrendChart(presentation: presentation)
+                    .frame(width: UsagePopoverMetrics.chartWidth, height: 118)
+                DetailStatsView(stats: presentation.stats)
+                Spacer(minLength: 0)
+            }
+            .accessibilityIdentifier("meter-detail-\(kind.rawValue)")
+        } else {
+            MissingMeterDetail(kind: kind, run: run)
+        }
+    }
+
+    private var effectiveRange: MeterDetailRange {
+        kind.window == .rollingFiveHours ? .twentyFourHours : store.navigation.detailRange
+    }
+
+    private func detailHeader(_ presentation: MeterDetailPresentation) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                run(.backFromMeterDetail)
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("Back")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+                .frame(height: 24)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Back to meters")
+            .accessibilityIdentifier("meter-detail-back-button")
+
+            Spacer()
+
+            Text(presentation.providerLabel)
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(UsagePresentation.chartColor(for: kind).swiftUIColor)
+                .tracking(1.0)
+                .lineLimit(1)
+                .accessibilityIdentifier("meter-detail-provider")
+        }
+        .frame(height: 24)
+    }
+
+    private func detailHero(_ presentation: MeterDetailPresentation) -> some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            Text(presentation.percentText)
+                .font(.system(size: 34, weight: .semibold, design: .monospaced))
+                .foregroundStyle(presentation.percentColor.swiftUIColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .accessibilityIdentifier("meter-detail-percent")
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(presentation.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .accessibilityIdentifier("meter-detail-title")
+
+                Text("\(presentation.resetContext) · burning \(presentation.burnText)")
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .accessibilityIdentifier("meter-detail-subtitle")
+            }
+            .padding(.bottom, 5)
+
+            Spacer(minLength: 0)
+        }
+        .frame(height: 42)
+    }
+}
+
+private struct ProjectionBanner: View {
+    var presentation: MeterDetailPresentation
+
+    var body: some View {
+        Text(presentation.bannerText)
+            .font(.system(size: 10.5, weight: .medium))
+            .foregroundStyle(foreground)
+            .lineLimit(1)
+            .minimumScaleFactor(0.78)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(background)
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .accessibilityIdentifier("projection-banner-\(toneIdentifier)")
+    }
+
+    private var toneIdentifier: String {
+        switch presentation.bannerTone {
+        case .critical:
+            return "critical"
+        case .safe:
+            return "safe"
+        case .muted:
+            return "muted"
+        }
+    }
+
+    private var foreground: Color {
+        switch presentation.bannerTone {
+        case .critical:
+            return Color(nsColor: NSColor(hex: 0xF2A6A9))
+        case .safe:
+            return UsagePalette.codexAccent.swiftUIColor
+        case .muted:
+            return UsagePalette.mutedText.swiftUIColor
+        }
+    }
+
+    private var background: Color {
+        switch presentation.bannerTone {
+        case .critical:
+            return UsagePalette.critical.swiftUIColor.opacity(0.13)
+        case .safe:
+            return UsagePalette.codexAccent.swiftUIColor.opacity(0.10)
+        case .muted:
+            return Color.white.opacity(0.045)
+        }
+    }
+}
+
+private struct RangeSelector: View {
+    var selectedRange: MeterDetailRange
+    var run: (AppIntentCommand) -> Void
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(MeterDetailRange.allCases, id: \.self) { range in
+                Button {
+                    run(.setMeterDetailRange(range))
+                } label: {
+                    Text(range.rawValue)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(range == selectedRange ? UsagePalette.primaryText.swiftUIColor : UsagePalette.mutedText.swiftUIColor)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 21)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(range == selectedRange ? Color.white.opacity(0.12) : Color.clear)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Show \(range.rawValue) range")
+                .accessibilityIdentifier("range-\(range.rawValue)-button")
+            }
+        }
+        .padding(2)
+        .background(Color.white.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .accessibilityIdentifier("meter-detail-range-selector")
+    }
+}
+
+private struct DetailTrendChart: View {
+    var presentation: MeterDetailPresentation
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Canvas { context, size in
+                drawChart(in: &context, size: size)
+            }
+            .background(UsagePalette.inset.swiftUIColor.opacity(0.78))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(Color.white.opacity(0.07), lineWidth: 1)
+            )
+
+            HStack {
+                Text(xStartLabel)
+                Spacer()
+                Text("now")
+            }
+            .font(.system(size: 8.5, weight: .regular))
+            .foregroundStyle(UsagePalette.mutedText.swiftUIColor.opacity(0.72))
+        }
+        .accessibilityIdentifier("meter-detail-chart")
+    }
+
+    private var xStartLabel: String {
+        switch presentation.range {
+        case .twentyFourHours:
+            return "24h ago"
+        case .threeDays:
+            return "3d ago"
+        case .sevenDays:
+            return "7d ago"
+        }
+    }
+
+    private func drawChart(in context: inout GraphicsContext, size: CGSize) {
+        for value in [25.0, 50.0, 75.0] {
+            var grid = Path()
+            let y = yPosition(for: value, height: size.height)
+            grid.move(to: CGPoint(x: 0, y: y))
+            grid.addLine(to: CGPoint(x: size.width, y: y))
+            context.stroke(grid, with: .color(Color.white.opacity(0.05)), lineWidth: 1)
+        }
+
+        var limit = Path()
+        let limitY = yPosition(for: 100, height: size.height)
+        limit.move(to: CGPoint(x: 0, y: limitY))
+        limit.addLine(to: CGPoint(x: size.width, y: limitY))
+        context.stroke(limit, with: .color(UsagePalette.critical.swiftUIColor.opacity(0.30)), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+
+        let dates = chartDates
+        guard let firstDate = dates.min(), let lastDate = dates.max(), firstDate < lastDate else {
+            drawEmptyChart(in: &context, size: size)
+            return
+        }
+
+        drawResetMarkers(in: &context, size: size, firstDate: firstDate, lastDate: lastDate)
+        drawUsageLine(in: &context, size: size, firstDate: firstDate, lastDate: lastDate)
+        drawProjection(in: &context, size: size, firstDate: firstDate, lastDate: lastDate)
+    }
+
+    private var chartDates: [Date] {
+        let pointDates = presentation.points.map(\.capturedAt)
+        if let projection = presentation.projection {
+            return pointDates + [projection.endDate]
+        }
+        return pointDates
+    }
+
+    private func drawResetMarkers(in context: inout GraphicsContext, size: CGSize, firstDate: Date, lastDate: Date) {
+        let resetDates = Array(Set(presentation.points.filter(\.preservesResetDiscontinuity).map(\.capturedAt))).sorted()
+        for date in resetDates.prefix(3) {
+            let x = xPosition(for: date, width: size.width, firstDate: firstDate, lastDate: lastDate)
+            var marker = Path()
+            marker.move(to: CGPoint(x: x, y: 10))
+            marker.addLine(to: CGPoint(x: x, y: size.height - 10))
+            context.stroke(marker, with: .color(UsagePalette.mutedText.swiftUIColor.opacity(0.50)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+        }
+    }
+
+    private func drawUsageLine(in context: inout GraphicsContext, size: CGSize, firstDate: Date, lastDate: Date) {
+        guard !presentation.points.isEmpty else {
+            drawEmptyChart(in: &context, size: size)
+            return
+        }
+
+        var line = Path()
+        var area = Path()
+        var areaStarted = false
+        let bottom = size.height - 8
+
+        for (index, point) in presentation.points.enumerated() {
+            let cgPoint = pointPosition(point, size: size, firstDate: firstDate, lastDate: lastDate)
+            if index == 0 {
+                line.move(to: cgPoint)
+                area.move(to: CGPoint(x: cgPoint.x, y: bottom))
+                area.addLine(to: cgPoint)
+                areaStarted = true
+            } else if point.preservesResetDiscontinuity,
+                      point.utilization.value < presentation.points[index - 1].utilization.value {
+                line.move(to: cgPoint)
+                if areaStarted {
+                    area.addLine(to: CGPoint(x: pointPosition(presentation.points[index - 1], size: size, firstDate: firstDate, lastDate: lastDate).x, y: bottom))
+                    area.closeSubpath()
+                }
+                area.move(to: CGPoint(x: cgPoint.x, y: bottom))
+                area.addLine(to: cgPoint)
+            } else {
+                line.addLine(to: cgPoint)
+                area.addLine(to: cgPoint)
+            }
+        }
+
+        if let lastPoint = presentation.points.last {
+            area.addLine(to: CGPoint(x: pointPosition(lastPoint, size: size, firstDate: firstDate, lastDate: lastDate).x, y: bottom))
+            area.closeSubpath()
+        }
+
+        context.fill(area, with: .color(presentation.chartColor.swiftUIColor.opacity(0.09)))
+        context.stroke(line, with: .color(presentation.chartColor.swiftUIColor), style: StrokeStyle(lineWidth: 1.5, lineJoin: .round))
+    }
+
+    private func drawProjection(in context: inout GraphicsContext, size: CGSize, firstDate: Date, lastDate: Date) {
+        guard let projection = presentation.projection,
+              let lastPoint = presentation.points.last else {
+            return
+        }
+
+        let start = pointPosition(lastPoint, size: size, firstDate: firstDate, lastDate: lastDate)
+        let end = CGPoint(
+            x: xPosition(for: projection.endDate, width: size.width, firstDate: firstDate, lastDate: lastDate),
+            y: yPosition(for: projection.endUtilization, height: size.height)
+        )
+        var path = Path()
+        path.move(to: start)
+        path.addLine(to: end)
+        let color = projection.isCritical ? UsagePalette.critical : UsagePalette.mutedText
+        context.stroke(path, with: .color(color.swiftUIColor), style: StrokeStyle(lineWidth: 1.2, dash: [2, 4]))
+
+        if projection.isCritical {
+            context.fill(
+                Path(ellipseIn: CGRect(x: end.x - 5, y: end.y - 5, width: 10, height: 10)),
+                with: .color(UsagePalette.critical.swiftUIColor.opacity(0.18))
+            )
+            context.fill(
+                Path(ellipseIn: CGRect(x: end.x - 2.4, y: end.y - 2.4, width: 4.8, height: 4.8)),
+                with: .color(UsagePalette.critical.swiftUIColor)
+            )
+        }
+    }
+
+    private func drawEmptyChart(in context: inout GraphicsContext, size: CGSize) {
+        var path = Path()
+        path.move(to: CGPoint(x: 10, y: size.height / 2))
+        path.addLine(to: CGPoint(x: size.width - 10, y: size.height / 2))
+        context.stroke(path, with: .color(UsagePalette.mutedText.swiftUIColor.opacity(0.35)), style: StrokeStyle(lineWidth: 1, dash: [3, 4]))
+    }
+
+    private func pointPosition(_ point: UsageChartPoint, size: CGSize, firstDate: Date, lastDate: Date) -> CGPoint {
+        CGPoint(
+            x: xPosition(for: point.capturedAt, width: size.width, firstDate: firstDate, lastDate: lastDate),
+            y: yPosition(for: point.utilization.value, height: size.height)
+        )
+    }
+
+    private func xPosition(for date: Date, width: CGFloat, firstDate: Date, lastDate: Date) -> CGFloat {
+        let denominator = max(1, lastDate.timeIntervalSince(firstDate))
+        return CGFloat(date.timeIntervalSince(firstDate) / denominator) * width
+    }
+
+    private func yPosition(for value: Double, height: CGFloat) -> CGFloat {
+        height - CGFloat(min(100, max(0, value)) / 100) * (height - 18) - 8
+    }
+}
+
+private struct DetailStatsView: View {
+    var stats: [MeterDetailStat]
+
+    var body: some View {
+        HStack(spacing: 1) {
+            ForEach(stats, id: \.label) { stat in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(stat.label)
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(Color(nsColor: NSColor(hex: 0x6E6A64)))
+                        .tracking(0.8)
+                    Text(stat.value)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(stat.color.swiftUIColor)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 7)
+                .background(Color.white.opacity(0.04))
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityIdentifier("meter-detail-stats")
+    }
+}
+
+private struct MissingMeterDetail: View {
+    var kind: MeterKind
+    var run: (AppIntentCommand) -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Button {
+                    run(.backFromMeterDetail)
+                } label: {
+                    Label("Back", systemImage: "chevron.left")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("meter-detail-back-button")
+                Spacer()
+            }
+
+            Spacer()
+            NoHistoryView(message: "\(kind.displayName) unavailable")
+                .frame(width: UsagePopoverMetrics.chartWidth, height: 44)
+            Spacer()
+        }
+    }
+}
+
+private struct SettingsPopoverScreen: View {
+    var settings: MonitorSettings
+    var run: (AppIntentCommand) -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                Button {
+                    run(.closeSettings)
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back to meters")
+                .accessibilityIdentifier("settings-back-button")
+
+                Text("Settings")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
+
+                Spacer()
+            }
+            .frame(height: 28)
+
+            SettingsStepperRow(
+                title: "Polling interval",
+                valueText: "\(settings.pollingInterval.minutes) min",
+                identifier: "settings-polling-stepper",
+                decrementDisabled: settings.pollingInterval.minutes <= PollingInterval.allowedRange.lowerBound,
+                incrementDisabled: settings.pollingInterval.minutes >= PollingInterval.allowedRange.upperBound,
+                decrement: {
+                    setPolling(settings.pollingInterval.minutes - 1)
+                },
+                increment: {
+                    setPolling(settings.pollingInterval.minutes + 1)
+                }
+            )
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Alert threshold")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
+                    Spacer()
+                    Text("\(Int(settings.alertThreshold.percentage))%")
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
+                }
+
+                Slider(
+                    value: Binding(
+                        get: { settings.alertThreshold.percentage },
+                        set: { setAlertThreshold($0) }
+                    ),
+                    in: Double(AlertThreshold.allowedRange.lowerBound)...Double(AlertThreshold.allowedRange.upperBound),
+                    step: Double(AlertThreshold.step)
+                )
+                .controlSize(.small)
+                .accessibilityIdentifier("settings-alert-threshold-slider")
+
+                Text("Status colors stay fixed at 70% and 90%.")
+                    .font(.system(size: 9.5, weight: .regular))
+                    .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+                    .lineLimit(1)
+            }
+            .settingsPanelStyle()
+
+            SettingsStepperRow(
+                title: "History retention",
+                valueText: "\(settings.historyRetention.days) days",
+                identifier: "settings-retention-stepper",
+                decrementDisabled: settings.historyRetention.days <= HistoryRetention.allowedRange.lowerBound,
+                incrementDisabled: settings.historyRetention.days >= HistoryRetention.allowedRange.upperBound,
+                decrement: {
+                    setRetention(settings.historyRetention.days - 1)
+                },
+                increment: {
+                    setRetention(settings.historyRetention.days + 1)
+                }
+            )
+
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Launch at Login")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
+                    Text(settings.launchAtLogin ? "Enabled" : "Disabled")
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+                }
+                Spacer()
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { settings.launchAtLogin },
+                        set: { run(.setLaunchAtLogin($0)) }
+                    )
+                )
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .accessibilityIdentifier("settings-launch-at-login-toggle")
+            }
+            .settingsPanelStyle()
+
+            Spacer(minLength: 0)
+        }
+        .accessibilityIdentifier("settings-screen")
+    }
+
+    private func setPolling(_ minutes: Int) {
+        guard let interval = try? PollingInterval(minutes: minutes) else {
+            return
+        }
+        run(.setPollingInterval(interval))
+    }
+
+    private func setAlertThreshold(_ value: Double) {
+        let rounded = (value / Double(AlertThreshold.step)).rounded() * Double(AlertThreshold.step)
+        guard let threshold = try? AlertThreshold(percentage: rounded) else {
+            return
+        }
+        run(.setAlertThreshold(threshold))
+    }
+
+    private func setRetention(_ days: Int) {
+        guard let retention = try? HistoryRetention(days: days) else {
+            return
+        }
+        run(.setHistoryRetention(retention))
+    }
+}
+
+private struct SettingsStepperRow: View {
+    var title: String
+    var valueText: String
+    var identifier: String
+    var decrementDisabled: Bool
+    var incrementDisabled: Bool
+    var decrement: () -> Void
+    var increment: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
+                Text(valueText)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
+            }
+
+            Spacer()
+
+            Stepper(
+                "",
+                onIncrement: {
+                    guard !incrementDisabled else {
+                        return
+                    }
+                    increment()
+                },
+                onDecrement: {
+                    guard !decrementDisabled else {
+                        return
+                    }
+                    decrement()
+                }
+            )
+            .labelsHidden()
+            .controlSize(.small)
+            .accessibilityIdentifier(identifier)
+        }
+        .settingsPanelStyle()
+    }
+}
+
+private extension View {
+    func settingsPanelStyle() -> some View {
+        self
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .background(UsagePalette.inset.swiftUIColor.opacity(0.70))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
+            )
     }
 }
 
@@ -569,21 +1274,20 @@ private struct VisualEffectBackdrop: NSViewRepresentable {
 
 private struct UsagePopoverFixturePreview: View {
     @StateObject private var store: UsageMonitorStore
-    private let configuration: UsagePopoverConfiguration
 
-    init(snapshot: CombinedUsageSnapshot) {
-        configuration = snapshot.meters.isEmpty ? .production : .populatedFixture
+    init(snapshot: CombinedUsageSnapshot, history: [CombinedUsageSnapshot] = UsageMonitorFixtures.expandedHistorySnapshots) {
         _store = StateObject(
             wrappedValue: UsageMonitorStore(
-                dependencies: AppCompositionRoot.fixture(snapshot: snapshot),
+                dependencies: AppCompositionRoot.fixture(snapshot: snapshot, historySnapshots: history),
                 initialSnapshot: snapshot,
+                historicalSnapshots: history,
                 navigation: AppNavigationState(isHistoryExpanded: true)
             )
         )
     }
 
     var body: some View {
-        UsagePopoverView(store: store, configuration: configuration)
+        UsagePopoverView(store: store, configuration: .production)
     }
 }
 
@@ -608,5 +1312,5 @@ private struct UsagePopoverFixturePreview: View {
 }
 
 #Preview("No Data") {
-    UsagePopoverFixturePreview(snapshot: UsageMonitorFixtures.noDataSnapshot)
+    UsagePopoverFixturePreview(snapshot: UsageMonitorFixtures.noDataSnapshot, history: [])
 }

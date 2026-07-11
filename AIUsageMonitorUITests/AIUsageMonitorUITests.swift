@@ -81,6 +81,80 @@ final class AIUsageMonitorUITests: XCTestCase {
         XCTAssertLessThanOrEqual(evidence.bitmap.pixelCount(near: TestPalette.haiku, in: .emptyHistory, tolerance: 0.12), 2)
     }
 
+    func testEveryMeterRowOpensMatchingDetailAndBackReturnsToList() throws {
+        let app = launchInteractiveFixture(scenario: "critical", historyExpanded: false)
+        defer { app.terminate() }
+
+        for kind in [
+            "claudeSession",
+            "claudeWeekAll",
+            "claudeWeekFable",
+            "claudeWeekSonnet",
+            "claudeWeekHaiku",
+            "codexSession",
+            "codexWeek"
+        ] {
+            let row = app.buttons["meter-row-\(kind)"]
+            XCTAssertTrue(row.waitForExistence(timeout: 5), "Missing row \(kind)")
+            row.click()
+
+            XCTAssertTrue(app.otherElements["meter-detail-\(kind)"].waitForExistence(timeout: 5), "Missing detail \(kind)")
+            XCTAssertTrue(app.otherElements["usage-popover-root"].exists, "Popover root should stay mounted")
+
+            let back = app.buttons["meter-detail-back-button"]
+            XCTAssertTrue(back.waitForExistence(timeout: 5), "Missing back button for \(kind)")
+            back.click()
+            XCTAssertTrue(app.buttons["meter-row-\(kind)"].waitForExistence(timeout: 5), "Back should restore list for \(kind)")
+        }
+    }
+
+    func testDetailProjectionFixturesRenderCriticalAndSafeStates() throws {
+        let critical = try runFixture(scenario: "pre-reset-exhaustion", historyExpanded: false)
+        assertBaselineBitmap(critical.bitmap)
+        XCTAssertTrue(critical.metadata.contains("navigation: detail claudeWeekFable range 7d"))
+        XCTAssertTrue(critical.metadata.contains("detail_kind: claudeWeekFable"))
+        XCTAssertTrue(critical.metadata.contains("projection_state: critical"))
+        XCTAssertGreaterThan(critical.detailChartPointCount, 30)
+        XCTAssertGreaterThan(critical.bitmap.luminanceRange(in: .detailChart), 0.18)
+        let criticalRedPixels = critical.bitmap.pixelCount(near: TestPalette.critical, in: .detailChart, tolerance: 0.22)
+        XCTAssertGreaterThan(criticalRedPixels, 2)
+
+        let safe = try runFixture(scenario: "safe-projection", historyExpanded: false)
+        assertBaselineBitmap(safe.bitmap)
+        XCTAssertTrue(safe.metadata.contains("navigation: detail codexWeek range 7d"))
+        XCTAssertTrue(safe.metadata.contains("projection_state: safe"))
+        XCTAssertGreaterThan(safe.detailChartPointCount, 30)
+        XCTAssertGreaterThan(safe.bitmap.luminanceRange(in: .detailChart), 0.18)
+        XCTAssertLessThan(safe.bitmap.pixelCount(near: TestPalette.critical, in: .detailChart, tolerance: 0.22), criticalRedPixels)
+    }
+
+    func testRangeSettingsAndNoHistoryFixturesRenderExpectedMetadata() throws {
+        let range24 = try runFixture(scenario: "range-24h", historyExpanded: false)
+        let range3 = try runFixture(scenario: "range-3d", historyExpanded: false)
+        let range7 = try runFixture(scenario: "range-7d", historyExpanded: false)
+
+        XCTAssertTrue(range24.metadata.contains("detail_range: 24h"))
+        XCTAssertTrue(range3.metadata.contains("detail_range: 3d"))
+        XCTAssertTrue(range7.metadata.contains("detail_range: 7d"))
+        XCTAssertLessThan(range24.detailChartPointCount, range7.detailChartPointCount)
+        XCTAssertLessThan(range3.detailChartPointCount, range7.detailChartPointCount)
+
+        let settings = try runFixture(scenario: "settings", historyExpanded: false)
+        assertBaselineBitmap(settings.bitmap)
+        XCTAssertTrue(settings.metadata.contains("navigation: settings"))
+        XCTAssertTrue(settings.metadata.contains("settings_polling_minutes: 5"))
+        XCTAssertTrue(settings.metadata.contains("settings_alert_threshold: 85"))
+        XCTAssertTrue(settings.metadata.contains("settings_history_retention_days: 45"))
+        XCTAssertTrue(settings.metadata.contains("settings_launch_at_login: true"))
+        XCTAssertGreaterThan(settings.bitmap.luminanceRange(in: .settings), 0.20)
+
+        let noHistory = try runFixture(scenario: "no-history", historyExpanded: true)
+        assertBaselineBitmap(noHistory.bitmap)
+        XCTAssertTrue(noHistory.metadata.contains("history_state: empty"))
+        XCTAssertTrue(noHistory.metadata.contains("history_snapshot_count: 0"))
+        XCTAssertTrue(noHistory.metadata.contains("meter_order: claudeSession,claudeWeekAll,claudeWeekFable,claudeWeekSonnet,claudeWeekHaiku,codexSession,codexWeek"))
+    }
+
     private func runFixture(scenario: String, historyExpanded: Bool) throws -> FixtureEvidence {
         let directory = evidenceDirectory(named: scenario)
         let imageURL = directory.appendingPathComponent("popover-\(scenario).png")
@@ -112,6 +186,22 @@ final class AIUsageMonitorUITests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
         return FixtureEvidence(metadata: metadata, bitmap: bitmap)
+    }
+
+    private func launchInteractiveFixture(scenario: String, historyExpanded: Bool) -> XCUIApplication {
+        let app = XCUIApplication()
+        XCTAssertEqual(app.state, .notRunning, "Each fixture test must begin from a clean application state")
+        app.launchArguments = [
+            "--fixture-scenario",
+            scenario,
+            "--ui-smoke-window"
+        ]
+        if historyExpanded {
+            app.launchArguments.append("--history-expanded")
+        }
+        app.launch()
+        XCTAssertTrue(app.otherElements["usage-popover-root"].waitForExistence(timeout: 5))
+        return app
     }
 
     private func assertBaselineBitmap(
@@ -160,6 +250,23 @@ final class AIUsageMonitorUITests: XCTestCase {
 private struct FixtureEvidence {
     var metadata: String
     var bitmap: BitmapProbe
+
+    var detailChartPointCount: Int {
+        Int(metadataValue("detail_chart_points")) ?? 0
+    }
+
+    private func metadataValue(_ key: String) -> String {
+        metadata
+            .split(separator: "\n")
+            .compactMap { line -> String? in
+                let prefix = "\(key): "
+                guard line.hasPrefix(prefix) else {
+                    return nil
+                }
+                return String(line.dropFirst(prefix.count))
+            }
+            .first ?? ""
+    }
 }
 
 private struct BitmapRegion {
@@ -171,6 +278,8 @@ private struct BitmapRegion {
     static let meterRows = BitmapRegion(x: 0.03...0.97, y: 0.12...0.82)
     static let populatedHistory = BitmapRegion(x: 0.03...0.97, y: 0.76...0.99)
     static let emptyHistory = BitmapRegion(x: 0.03...0.97, y: 0.38...0.55)
+    static let detailChart = BitmapRegion(x: 0.03...0.97, y: 0.28...0.76)
+    static let settings = BitmapRegion(x: 0.03...0.97, y: 0.12...0.92)
 }
 
 private struct BitmapProbe {

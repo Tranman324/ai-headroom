@@ -8,6 +8,15 @@ enum UsageFixtureScenario: String, CaseIterable, Sendable {
     case stale
     case error
     case noData = "no-data"
+    case expandedHistory = "expanded-history"
+    case preResetExhaustion = "pre-reset-exhaustion"
+    case safeProjection = "safe-projection"
+    case insufficientBurn = "insufficient-burn"
+    case rangeTwentyFourHours = "range-24h"
+    case rangeThreeDays = "range-3d"
+    case rangeSevenDays = "range-7d"
+    case settings
+    case noHistory = "no-history"
 
     var snapshot: CombinedUsageSnapshot {
         switch self {
@@ -23,15 +32,65 @@ enum UsageFixtureScenario: String, CaseIterable, Sendable {
             return UsageMonitorFixtures.providerErrorOtherHealthySnapshot
         case .noData:
             return UsageMonitorFixtures.noDataSnapshot
+        case .expandedHistory, .preResetExhaustion, .rangeTwentyFourHours, .rangeThreeDays, .rangeSevenDays:
+            return UsageMonitorFixtures.criticalSnapshot
+        case .safeProjection:
+            return UsageMonitorFixtures.safeProjectionSnapshot
+        case .insufficientBurn, .noHistory:
+            return UsageMonitorFixtures.normalSnapshot
+        case .settings:
+            return UsageMonitorFixtures.settingsSnapshot
+        }
+    }
+
+    var historySnapshots: [CombinedUsageSnapshot] {
+        switch self {
+        case .noData, .noHistory:
+            return UsageMonitorFixtures.noHistorySnapshots
+        case .preResetExhaustion, .rangeTwentyFourHours, .rangeThreeDays, .rangeSevenDays:
+            return UsageMonitorFixtures.preResetExhaustionHistory
+        case .safeProjection:
+            return UsageMonitorFixtures.safeProjectionHistory
+        case .insufficientBurn:
+            return UsageMonitorFixtures.insufficientBurnHistory
+        case .normal, .warning, .critical, .stale, .error, .expandedHistory, .settings:
+            return UsageMonitorFixtures.expandedHistorySnapshots
+        }
+    }
+
+    var monitorSettings: MonitorSettings {
+        switch self {
+        case .settings:
+            return UsageMonitorFixtures.settingsFixtureSettings
+        case .normal, .warning, .critical, .stale, .error, .noData, .expandedHistory, .preResetExhaustion, .safeProjection, .insufficientBurn, .rangeTwentyFourHours, .rangeThreeDays, .rangeSevenDays, .noHistory:
+            return .defaults
         }
     }
 
     var popoverConfiguration: UsagePopoverConfiguration {
+        .production
+    }
+
+    func navigation(startsWithHistoryExpanded: Bool) -> AppNavigationState {
         switch self {
-        case .noData:
-            return .production
-        case .normal, .warning, .critical, .stale, .error:
-            return .populatedFixture
+        case .preResetExhaustion:
+            return AppNavigationState(meterRoute: .detail(.claudeWeekFable), detailRange: .sevenDays)
+        case .safeProjection:
+            return AppNavigationState(meterRoute: .detail(.codexWeek), detailRange: .sevenDays)
+        case .insufficientBurn:
+            return AppNavigationState(meterRoute: .detail(.claudeSession), detailRange: .twentyFourHours)
+        case .rangeTwentyFourHours:
+            return AppNavigationState(meterRoute: .detail(.claudeWeekFable), detailRange: .twentyFourHours)
+        case .rangeThreeDays:
+            return AppNavigationState(meterRoute: .detail(.claudeWeekFable), detailRange: .threeDays)
+        case .rangeSevenDays:
+            return AppNavigationState(meterRoute: .detail(.claudeWeekFable), detailRange: .sevenDays)
+        case .settings:
+            return AppNavigationState(isSettingsPresented: true)
+        case .expandedHistory, .noHistory:
+            return AppNavigationState(isHistoryExpanded: true)
+        case .normal, .warning, .critical, .stale, .error, .noData:
+            return AppNavigationState(isHistoryExpanded: startsWithHistoryExpanded)
         }
     }
 
@@ -76,17 +135,26 @@ struct FixtureLaunchConfiguration {
 
     var dependencies: AppDependencies {
         if let scenario {
-            return AppCompositionRoot.fixture(snapshot: scenario.snapshot)
+            return AppCompositionRoot.fixture(
+                snapshot: scenario.snapshot,
+                historySnapshots: scenario.historySnapshots,
+                settings: scenario.monitorSettings
+            )
         }
         return AppCompositionRoot.production()
     }
 
     var settings: MonitorSettings {
-        MonitorSettings()
+        scenario?.monitorSettings ?? MonitorSettings()
+    }
+
+    var initialHistorySnapshots: [CombinedUsageSnapshot] {
+        scenario?.historySnapshots ?? []
     }
 
     var navigation: AppNavigationState {
-        AppNavigationState(isHistoryExpanded: startsWithHistoryExpanded)
+        scenario?.navigation(startsWithHistoryExpanded: startsWithHistoryExpanded)
+            ?? AppNavigationState(isHistoryExpanded: startsWithHistoryExpanded)
     }
 
     var popoverConfiguration: UsagePopoverConfiguration {
@@ -149,21 +217,25 @@ final class FixtureWindowController {
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [configuration, store, window] in
-            try? FixtureEvidenceWriter.writeWindowScreenshot(
-                window,
-                scenario: configuration.scenario,
-                snapshot: store.snapshot,
-                navigation: store.navigation,
-                history: configuration.popoverConfiguration.history,
-                directory: screenshotDirectory
-            )
+            Task { @MainActor in
+                await store.loadHistory(since: store.snapshot.capturedAt.addingTimeInterval(-UsagePresentation.historyLookback))
+                try? FixtureEvidenceWriter.writeWindowScreenshot(
+                    window,
+                    scenario: configuration.scenario,
+                    snapshot: store.snapshot,
+                    settings: store.settings,
+                    navigation: store.navigation,
+                    historicalSnapshots: store.historicalSnapshots,
+                    directory: screenshotDirectory
+                )
 
-            guard configuration.shouldTerminateAfterScreenshot else {
-                return
-            }
-            window.orderOut(nil)
-            DispatchQueue.main.async {
-                NSApp.terminate(nil)
+                guard configuration.shouldTerminateAfterScreenshot else {
+                    return
+                }
+                window.orderOut(nil)
+                DispatchQueue.main.async {
+                    NSApp.terminate(nil)
+                }
             }
         }
     }
@@ -175,8 +247,9 @@ private enum FixtureEvidenceWriter {
         _ window: NSWindow,
         scenario: UsageFixtureScenario?,
         snapshot: CombinedUsageSnapshot,
+        settings: MonitorSettings,
         navigation: AppNavigationState,
-        history: UsageHistoryState,
+        historicalSnapshots: [CombinedUsageSnapshot],
         directory: URL
     ) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -188,6 +261,8 @@ private enum FixtureEvidenceWriter {
         let scenarioName = scenario?.rawValue ?? "production"
         let imageURL = directory.appendingPathComponent("popover-\(scenarioName).png")
         let metadataURL = directory.appendingPathComponent("popover-\(scenarioName).txt")
+        let historySeries = UsagePresentation.historySeries(from: historicalSnapshots, now: snapshot.capturedAt)
+        let detail = detailPresentation(for: navigation, snapshot: snapshot, historicalSnapshots: historicalSnapshots)
         try data.write(to: imageURL, options: .atomic)
 
         let metadata = """
@@ -199,12 +274,21 @@ private enum FixtureEvidenceWriter {
         meter_order: \(meterOrder(snapshot).joined(separator: ","))
         provider_health: \(providerHealth(snapshot).joined(separator: ","))
         no_data_providers: \(noDataProviders(snapshot).joined(separator: ","))
-        history_state: \(history.series.isEmpty ? "empty" : "populated")
-        history_series_count: \(history.series.count)
+        history_state: \(historySeries.isEmpty ? "empty" : "populated")
+        history_snapshot_count: \(historicalSnapshots.count)
+        history_series_count: \(historySeries.count)
         navigation: \(navigationState(navigation))
+        detail_kind: \(detail?.kind.rawValue ?? "none")
+        detail_range: \(detail?.range.rawValue ?? "none")
+        detail_chart_points: \(detail?.points.count ?? 0)
+        projection_state: \(projectionState(detail))
+        settings_polling_minutes: \(settings.pollingInterval.minutes)
+        settings_alert_threshold: \(Int(settings.alertThreshold.percentage))
+        settings_history_retention_days: \(settings.historyRetention.days)
+        settings_launch_at_login: \(settings.launchAtLogin)
         secret_free_fixture: true
         """
-        try metadata.write(to: metadataURL, atomically: true, encoding: .utf8)
+        try (metadata + "\n").write(to: metadataURL, atomically: true, encoding: .utf8)
     }
 
     private static func windowBitmap(_ window: NSWindow) -> NSBitmapImageRep? {
@@ -266,11 +350,45 @@ private enum FixtureEvidenceWriter {
     }
 
     private static func navigationState(_ navigation: AppNavigationState) -> String {
+        if navigation.isSettingsPresented {
+            return "settings"
+        }
+
         switch navigation.meterRoute {
         case .list:
             return navigation.isHistoryExpanded ? "list history-expanded" : "list history-collapsed"
         case let .detail(kind):
-            return "detail \(kind.rawValue)"
+            return "detail \(kind.rawValue) range \(navigation.detailRange.rawValue)"
+        }
+    }
+
+    private static func detailPresentation(
+        for navigation: AppNavigationState,
+        snapshot: CombinedUsageSnapshot,
+        historicalSnapshots: [CombinedUsageSnapshot]
+    ) -> MeterDetailPresentation? {
+        guard case let .detail(kind) = navigation.meterRoute else {
+            return nil
+        }
+        return UsagePresentation.detailPresentation(
+            kind: kind,
+            snapshot: snapshot,
+            historicalSnapshots: historicalSnapshots,
+            range: navigation.detailRange
+        )
+    }
+
+    private static func projectionState(_ detail: MeterDetailPresentation?) -> String {
+        guard let detail else {
+            return "none"
+        }
+        switch detail.bannerTone {
+        case .critical:
+            return "critical"
+        case .safe:
+            return "safe"
+        case .muted:
+            return "none"
         }
     }
 }
