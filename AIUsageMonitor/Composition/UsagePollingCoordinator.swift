@@ -81,13 +81,13 @@ actor UsagePollingCoordinator {
         intervalTask = nil
         connectivityTask = nil
         lifecycleTask = nil
-        pollTask = nil
-        pollInProgress = false
         pendingTrigger = nil
-        resumeIdleWaiters()
     }
 
     func requestPoll(_ trigger: Trigger) async {
+        guard started else {
+            return
+        }
         enqueuePoll(trigger)
         guard pollInProgress else {
             return
@@ -222,6 +222,9 @@ actor UsagePollingCoordinator {
     }
 
     private func enqueuePoll(_ trigger: Trigger) {
+        guard started else {
+            return
+        }
         if pollInProgress {
             pendingTrigger = mergedPendingTrigger(existing: pendingTrigger, incoming: trigger)
             return
@@ -263,9 +266,16 @@ actor UsagePollingCoordinator {
             pendingTrigger = nil
         }
 
+        let restartTrigger = started ? pendingTrigger : nil
+        pendingTrigger = nil
         pollInProgress = false
         pollTask = nil
-        resumeIdleWaiters()
+
+        if let restartTrigger {
+            enqueuePoll(restartTrigger)
+        } else {
+            resumeIdleWaiters()
+        }
     }
 
     private func runPoll(_ trigger: Trigger) async {
@@ -375,7 +385,9 @@ actor UsagePollingCoordinator {
             meters: previousProvider.meters,
             health: .stale(
                 checkedAt: capturedAt,
-                staleSince: previousProvider.health.checkedAt ?? previousSnapshot.capturedAt,
+                staleSince: previousProvider.health.staleSince
+                    ?? previousProvider.health.checkedAt
+                    ?? previousSnapshot.capturedAt,
                 error: error
             )
         )

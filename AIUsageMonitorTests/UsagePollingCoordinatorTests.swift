@@ -50,7 +50,11 @@ final class UsagePollingCoordinatorTests: XCTestCase {
     }
 
     func testManualRefreshWritesProviderLocalSuccessAndFailureHistory() async throws {
-        let history = RecordingHistoryStore()
+        let initialProviders = Dictionary(
+            uniqueKeysWithValues: UsageMonitorFixtures.criticalSnapshot.providers.map { ($0.provider, $0) }
+        )
+        let history = RecordingHistoryStore(latestSnapshots: initialProviders)
+        let connectivity = PassiveConnectivityMonitor(initialState: .offline)
         let codexFailure = ProviderClientFailure.rateLimited(provider: .codex)
         let store = makeStore(
             providers: [
@@ -64,9 +68,12 @@ final class UsagePollingCoordinatorTests: XCTestCase {
                 )
             ],
             historyStore: history,
+            connectivityMonitor: connectivity,
             initialSnapshot: UsageMonitorFixtures.criticalSnapshot
         )
 
+        await store.startMonitoring()
+        connectivity.set(.online)
         await store.refresh()
 
         let claude = try XCTUnwrap(store.snapshot.provider(.claude))
@@ -86,10 +93,12 @@ final class UsagePollingCoordinatorTests: XCTestCase {
         }
         XCTAssertEqual(failureRecord.provider, .codex)
         XCTAssertEqual(failureRecord.error.code, .rateLimited)
+        await store.stopMonitoring()
     }
 
     func testStateUpdatesWhenProviderHistoryAppendFails() async throws {
         let history = RecordingHistoryStore(failingOperations: [.appendProviderSnapshot])
+        let connectivity = PassiveConnectivityMonitor(initialState: .offline)
         let store = makeStore(
             providers: [
                 RecordingProviderClient(
@@ -97,14 +106,18 @@ final class UsagePollingCoordinatorTests: XCTestCase {
                     results: [.success(try XCTUnwrap(UsageMonitorFixtures.normalSnapshot.provider(.claude)))]
                 )
             ],
-            historyStore: history
+            historyStore: history,
+            connectivityMonitor: connectivity
         )
 
+        await store.startMonitoring()
+        connectivity.set(.online)
         await store.refresh()
 
         let failedAppendAttempts = await history.failedAppendAttempts()
         XCTAssertEqual(store.snapshot.provider(.claude)?.health.kind, .fresh)
         XCTAssertEqual(failedAppendAttempts, 1)
+        await store.stopMonitoring()
     }
 
     func testConcurrentManualRefreshesCoalesceWithoutOverlappingPollCycles() async throws {
@@ -115,8 +128,11 @@ final class UsagePollingCoordinatorTests: XCTestCase {
                 try XCTUnwrap(UsageMonitorFixtures.warningSnapshot.provider(.claude))
             ]
         )
-        let store = makeStore(providers: [provider])
+        let connectivity = PassiveConnectivityMonitor(initialState: .offline)
+        let store = makeStore(providers: [provider], connectivityMonitor: connectivity)
 
+        await store.startMonitoring()
+        connectivity.set(.online)
         let first = Task { @MainActor in
             await store.refresh()
         }
@@ -143,6 +159,7 @@ final class UsagePollingCoordinatorTests: XCTestCase {
         let finalMaxConcurrentFetches = await provider.maxConcurrentFetches()
         XCTAssertEqual(finalFetchCount, 2)
         XCTAssertEqual(finalMaxConcurrentFetches, 1)
+        await store.stopMonitoring()
     }
 
     func testFailedPollDoesNotRetryImmediately() async throws {
@@ -150,13 +167,17 @@ final class UsagePollingCoordinatorTests: XCTestCase {
             provider: .claude,
             results: [.failure(ProviderClientFailure.transport(provider: .claude))]
         )
-        let store = makeStore(providers: [provider])
+        let connectivity = PassiveConnectivityMonitor(initialState: .offline)
+        let store = makeStore(providers: [provider], connectivityMonitor: connectivity)
 
+        await store.startMonitoring()
+        connectivity.set(.online)
         await store.refresh()
 
         let fetchCount = await provider.fetchCount()
         XCTAssertEqual(fetchCount, 1)
         XCTAssertEqual(store.snapshot.provider(.claude)?.health.kind, .errored)
+        await store.stopMonitoring()
     }
 
     func testConnectivityRestoreTriggersOnePollAfterOfflineStartup() async throws {
@@ -248,20 +269,23 @@ final class UsagePollingCoordinatorTests: XCTestCase {
             provider: .claude,
             snapshots: [try XCTUnwrap(UsageMonitorFixtures.normalSnapshot.provider(.claude))]
         )
+        let connectivity = PassiveConnectivityMonitor(initialState: .offline)
         let store = makeStore(
             providers: [provider],
-            historyStore: history
+            historyStore: history,
+            connectivityMonitor: connectivity
         )
 
+        await store.startMonitoring()
+        connectivity.set(.online)
         let refresh = Task { @MainActor in
             await store.refresh()
         }
         await provider.waitForFetchCount(1)
         await store.stopMonitoring()
-        await refresh.value
-
         await provider.releaseOne()
         await provider.waitUntilIdle()
+        await refresh.value
         for _ in 0..<20 {
             let currentRecords = await history.appendedRecords()
             if !currentRecords.isEmpty {
@@ -273,6 +297,85 @@ final class UsagePollingCoordinatorTests: XCTestCase {
         let records = await history.appendedRecords()
         XCTAssertEqual(store.snapshot.provider(.claude)?.health.kind, .noData)
         XCTAssertEqual(records.count, 0)
+    }
+
+    func testRestartDoesNotOverlapWithCancelledProviderFetch() async throws {
+        let history = RecordingHistoryStore()
+        let stoppedResult = try XCTUnwrap(UsageMonitorFixtures.normalSnapshot.provider(.claude))
+        let restartedResult = try XCTUnwrap(UsageMonitorFixtures.warningSnapshot.provider(.claude))
+        let provider = BlockingProviderClient(
+            provider: .claude,
+            snapshots: [stoppedResult, restartedResult]
+        )
+        let store = makeStore(providers: [provider], historyStore: history)
+
+        let initialStart = Task { @MainActor in
+            await store.startMonitoring()
+        }
+        await provider.waitForFetchCount(1)
+        await store.stopMonitoring()
+
+        let restart = Task { @MainActor in
+            await store.startMonitoring()
+        }
+        await history.waitForPruneCount(2)
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+
+        var fetchCount = await provider.fetchCount()
+        var currentConcurrentFetches = await provider.currentConcurrentFetches()
+        var maxConcurrentFetches = await provider.maxConcurrentFetches()
+        XCTAssertEqual(fetchCount, 1)
+        XCTAssertEqual(currentConcurrentFetches, 1)
+        XCTAssertEqual(maxConcurrentFetches, 1)
+
+        await provider.releaseOne()
+        await provider.waitForFetchCount(2)
+        fetchCount = await provider.fetchCount()
+        currentConcurrentFetches = await provider.currentConcurrentFetches()
+        maxConcurrentFetches = await provider.maxConcurrentFetches()
+        XCTAssertEqual(fetchCount, 2)
+        XCTAssertEqual(currentConcurrentFetches, 1)
+        XCTAssertEqual(maxConcurrentFetches, 1)
+
+        await provider.releaseOne()
+        await provider.waitUntilIdle()
+        await initialStart.value
+        await restart.value
+
+        let records = await history.appendedRecords()
+        XCTAssertEqual(store.snapshot.provider(.claude)?.health.kind, .fresh)
+        XCTAssertEqual(store.snapshot.provider(.claude)?.meters, restartedResult.meters)
+        XCTAssertEqual(records.count, 1)
+        await store.stopMonitoring()
+    }
+
+    func testManualRefreshWhileStoppedDoesNoProviderOrHistoryWork() async throws {
+        let history = RecordingHistoryStore()
+        let connectivity = ManualConnectivityMonitor(initialState: .offline)
+        let provider = RecordingProviderClient(
+            provider: .claude,
+            results: [.success(try XCTUnwrap(UsageMonitorFixtures.normalSnapshot.provider(.claude)))]
+        )
+        let store = makeStore(
+            providers: [provider],
+            historyStore: history,
+            connectivityMonitor: connectivity
+        )
+
+        await store.startMonitoring()
+        await store.stopMonitoring()
+        let stoppedSnapshot = store.snapshot
+        connectivity.set(.online)
+
+        await store.refresh()
+
+        let fetchCount = await provider.fetchCount()
+        let records = await history.appendedRecords()
+        XCTAssertEqual(fetchCount, 0)
+        XCTAssertEqual(records.count, 0)
+        XCTAssertEqual(store.snapshot, stoppedSnapshot)
     }
 
     func testPauseAlertsPersistsExactlyOneHourFromInjectedClockAndKeepsStatusBoundariesFixed() async throws {
@@ -374,6 +477,7 @@ actor RecordingHistoryStore: HistoryStoring {
     private let latestSnapshots: [ProviderID: ProviderUsageSnapshot]
     private let failingOperations: Set<Operation>
     private var prunes = 0
+    private var pruneWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var failedAppends = 0
 
     init(
@@ -426,6 +530,7 @@ actor RecordingHistoryStore: HistoryStoring {
     func prune(olderThan cutoffDate: Date) async throws {
         prunes += 1
         storedRecords.removeAll { $0.timestamp < cutoffDate }
+        resumePruneWaiters()
     }
 
     func appendedRecords() -> [UsageHistoryRecord] {
@@ -436,8 +541,25 @@ actor RecordingHistoryStore: HistoryStoring {
         prunes
     }
 
+    func waitForPruneCount(_ expectedCount: Int) async {
+        if prunes >= expectedCount {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            pruneWaiters.append((expectedCount, continuation))
+        }
+    }
+
     func failedAppendAttempts() -> Int {
         failedAppends
+    }
+
+    private func resumePruneWaiters() {
+        let ready = pruneWaiters.filter { prunes >= $0.0 }
+        pruneWaiters.removeAll { prunes >= $0.0 }
+        for waiter in ready {
+            waiter.1.resume()
+        }
     }
 }
 
@@ -540,6 +662,10 @@ actor BlockingProviderClient: UsageProviderFetching {
         maxInFlight
     }
 
+    func currentConcurrentFetches() -> Int {
+        inFlight
+    }
+
     func waitUntilIdle() async {
         if inFlight == 0 {
             return
@@ -567,6 +693,7 @@ actor BlockingProviderClient: UsageProviderFetching {
             waiter.resume()
         }
     }
+
 }
 
 final class ManualClock: ClockProviding, @unchecked Sendable {
@@ -688,6 +815,39 @@ final class ManualConnectivityMonitor: ConnectivityMonitoring, @unchecked Sendab
         let activeContinuations = Array(continuations.values)
         lock.unlock()
         return activeContinuations
+    }
+}
+
+final class PassiveConnectivityMonitor: ConnectivityMonitoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var state: ConnectivityState
+
+    init(initialState: ConnectivityState) {
+        self.state = initialState
+    }
+
+    var currentState: ConnectivityState {
+        get async {
+            currentStateValue()
+        }
+    }
+
+    func states() -> AsyncStream<ConnectivityState> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
+
+    func set(_ newState: ConnectivityState) {
+        lock.lock()
+        state = newState
+        lock.unlock()
+    }
+
+    private func currentStateValue() -> ConnectivityState {
+        lock.lock()
+        defer { lock.unlock() }
+        return state
     }
 }
 
