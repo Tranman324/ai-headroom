@@ -112,6 +112,57 @@ final class AIUsageMonitorUITests: XCTestCase {
         }
     }
 
+    func testRefreshHistorySettingsAndLaunchToggleUseRealAccessibilityPaths() throws {
+        let app = launchInteractiveFixture(scenario: "normal", historyExpanded: false)
+
+        assertNavigationState(in: app, equals: "list history-collapsed")
+
+        click(element(in: app, identifier: "popover-refresh-button"), in: app)
+        XCTAssertTrue(popoverRoot(in: app).exists, "Refresh should keep the popover mounted")
+        assertNavigationState(in: app, equals: "list history-collapsed")
+
+        click(app.buttons["history-toggle"], in: app)
+        assertNavigationState(in: app, equals: "list history-expanded")
+        XCTAssertTrue(element(in: app, identifier: "history-expanded-content").waitForExistence(timeout: 5))
+
+        click(app.buttons["history-toggle"], in: app)
+        assertNavigationState(in: app, equals: "list history-collapsed")
+
+        click(element(in: app, identifier: "popover-settings-button"), in: app)
+        XCTAssertTrue(element(in: app, identifier: "settings-screen").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["3 min"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["30 days"].exists)
+        XCTAssertTrue(app.staticTexts["Disabled"].exists)
+
+        click(element(in: app, identifier: "settings-launch-at-login-toggle"), in: app)
+        XCTAssertTrue(app.staticTexts["Enabled"].waitForExistence(timeout: 5))
+
+        click(element(in: app, identifier: "settings-back-button"), in: app)
+        assertNavigationState(in: app, equals: "list history-collapsed")
+    }
+
+    func testDetailRangeSelectorUpdatesThroughRealAccessibilityPaths() throws {
+        let app = launchInteractiveFixture(scenario: "critical", historyExpanded: false)
+
+        click(app.buttons["meter-row-claudeWeekFable"], in: app)
+        XCTAssertTrue(element(in: app, identifier: "meter-detail-claudeWeekFable").waitForExistence(timeout: 5))
+        assertNavigationState(in: app, equals: "detail claudeWeekFable range 7d")
+
+        for (identifier, state) in [
+            ("Show 24h range", "detail claudeWeekFable range 24h"),
+            ("Show 3d range", "detail claudeWeekFable range 3d"),
+            ("Show 7d range", "detail claudeWeekFable range 7d")
+        ] {
+            click(app.buttons[identifier], in: app)
+            assertNavigationState(in: app, equals: state)
+            XCTAssertTrue(element(in: app, identifier: "meter-detail-chart").exists, "Range change should keep the detail chart mounted")
+        }
+
+        click(element(in: app, identifier: "meter-detail-back-button"), in: app)
+        assertNavigationState(in: app, equals: "list history-collapsed")
+        XCTAssertTrue(app.buttons["meter-row-claudeWeekFable"].waitForExistence(timeout: 5))
+    }
+
     func testDetailProjectionFixturesRenderCriticalAndSafeStates() throws {
         let critical = try runFixture(scenario: "pre-reset-exhaustion", historyExpanded: false)
         assertBaselineBitmap(critical.bitmap)
@@ -222,6 +273,32 @@ final class AIUsageMonitorUITests: XCTestCase {
 
     private func element(in app: XCUIApplication, identifier: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    private func assertNavigationState(
+        in app: XCUIApplication,
+        equals expected: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(waitForElement(in: app, identifier: "navigation-state", label: expected, timeout: 5), file: file, line: line)
+    }
+
+    private func waitForElement(
+        in app: XCUIApplication,
+        identifier: String,
+        label expectedLabel: String,
+        timeout: TimeInterval
+    ) -> Bool {
+        let element = element(in: app, identifier: identifier)
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if element.exists, element.label == expectedLabel {
+                return true
+            }
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        return element.exists && element.label == expectedLabel
     }
 
     private func assertAllMeterRowsExist(

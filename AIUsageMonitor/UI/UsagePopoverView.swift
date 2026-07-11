@@ -1136,10 +1136,11 @@ private struct SettingsPopoverScreen: View {
                     Text(settings.launchAtLogin ? "Enabled" : "Disabled")
                         .font(.system(size: 10, weight: .regular))
                         .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+                        .accessibilityIdentifier("settings-launch-at-login-state")
                 }
                 Spacer()
                 Toggle(
-                    "",
+                    "Launch at Login",
                     isOn: Binding(
                         get: { settings.launchAtLogin },
                         set: { run(.setLaunchAtLogin($0)) }
@@ -1154,6 +1155,7 @@ private struct SettingsPopoverScreen: View {
 
             Spacer(minLength: 0)
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("settings-screen")
     }
 
@@ -1198,6 +1200,7 @@ private struct SettingsStepperRow: View {
                 Text(valueText)
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
+                    .accessibilityIdentifier("\(identifier)-value")
             }
 
             Spacer()
