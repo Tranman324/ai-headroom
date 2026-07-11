@@ -4,7 +4,7 @@
 A **macOS-only native SwiftUI menu-bar app** that shows Claude Max and OpenAI Codex usage at a glance. No iOS. No server. No account switching. Pure visibility.
 
 ## Design Spec
-The full visual spec is in `ai-coding-tool-usage-monitor/project/AI Usage Monitor.dc.html`. Read it top-to-bottom — it's the source of truth for every pixel. The relevant screens for macOS-only:
+The full visual spec is in `design/design-spec.html` (exported from Claude Design). Its companion files (`design/support.js`, `design/ios-frame.jsx`) must be co-located for it to render in a browser. Read the HTML top-to-bottom — it's the source of truth for every pixel. The relevant screens for macOS-only:
 
 - **1a** — Menu bar status item (three states: normal, amber ≥70%, red ≥90%) + right-click context menu
 - **1b** — Popover with all meters, sparklines, collapsible history chart
