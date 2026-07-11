@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import AIUsageMonitor
 
@@ -89,7 +90,9 @@ final class CodexUsageProviderTests: XCTestCase {
         XCTAssertEqual(requests[2].headers["Authorization"]?.count, "Bearer ".count + alternateAccessToken.count)
         XCTAssertEqual(replacements.count, 1)
         XCTAssertEqual(replacements.first?.url, authURL)
-        XCTAssertEqual(replacements.first?.permissions, 0o600)
+        XCTAssertEqual(replacements.first?.metadata.permissions, 0o600)
+        XCTAssertEqual(replacements.first?.metadata.ownerID, getuid())
+        XCTAssertEqual(replacements.first?.metadata.groupID, getgid())
         XCTAssertTrue(storedJSON.string(at: ["tokens", "access_token"]) == alternateAccessToken)
         XCTAssertTrue(storedJSON.string(at: ["tokens", "refresh_token"]) == rotatedRefreshToken)
         XCTAssertTrue(storedJSON.string(at: ["tokens", "account_id"]) == accountID)
@@ -135,12 +138,36 @@ final class CodexUsageProviderTests: XCTestCase {
         await fileSystem.setData(authJSON(accessToken: alternateAccessToken))
         _ = try await provider.fetchUsageSnapshot()
 
-        let readCount = await fileSystem.readCount
+        let readCount = await fileSystem.secureReadCount
         let requests = await transport.requests
         XCTAssertEqual(readCount, 2)
         XCTAssertEqual(requests.count, 2)
         XCTAssertEqual(requests[0].headers["Authorization"]?.count, "Bearer ".count + accessToken.count)
         XCTAssertEqual(requests[1].headers["Authorization"]?.count, "Bearer ".count + alternateAccessToken.count)
+    }
+
+    func testDescriptorBoundReadCannotSubstituteBytesAfterValidation() async throws {
+        let fileSystem = RecordingCodexAuthFileSystem(data: authJSON())
+        await fileSystem.swapCanonicalDataAfterNextSecureRead(
+            authJSON(accessToken: alternateAccessToken)
+        )
+        let transport = RecordingProviderHTTPTransport(responses: [
+            .success(ProviderHTTPResponse(statusCode: 200, data: usageJSON()))
+        ])
+        let provider = CodexUsageProvider(
+            authStore: CodexAuthFileStore(homeDirectory: homeDirectory, fileSystem: fileSystem),
+            transport: transport,
+            clock: FixedClock(now: checkedAt)
+        )
+
+        _ = try await provider.fetchUsageSnapshot()
+
+        let secureReadCount = await fileSystem.secureReadCount
+        let requests = await transport.requests
+        XCTAssertEqual(secureReadCount, 1)
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].headers["Authorization"]?.count, "Bearer ".count + accessToken.count)
+        XCTAssertNotEqual(requests[0].headers["Authorization"]?.count, "Bearer ".count + alternateAccessToken.count)
     }
 
     func testMalformedAuthAndAPIFieldsFailWithSanitizedErrors() async {
@@ -240,7 +267,9 @@ final class CodexUsageProviderTests: XCTestCase {
         let codexDirectory = temporaryHome.appendingPathComponent(".codex", isDirectory: true)
         try fileManager.createDirectory(at: codexDirectory, withIntermediateDirectories: true)
         let authURL = codexDirectory.appendingPathComponent("auth.json")
+        let preservedGroupID = try XCTUnwrap(alternateSupplementaryGroup())
         try authJSON(includeUnknownFields: true).write(to: authURL)
+        XCTAssertEqual(chown(authURL.path, getuid(), preservedGroupID), 0)
         try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: authURL.path)
         defer {
             try? fileManager.removeItem(at: temporaryHome)
@@ -248,19 +277,92 @@ final class CodexUsageProviderTests: XCTestCase {
 
         let store = CodexAuthFileStore(homeDirectory: temporaryHome, fileSystem: LocalCodexAuthFileSystem())
         let document = try await store.readAuthDocument()
+        let originalMetadata = document.metadata
         _ = try await store.rotateTokens(in: document, accessToken: alternateAccessToken, refreshToken: nil)
 
-        let updatedData = try Data(contentsOf: authURL)
-        let updatedJSON = try JSONDecoder().decode(ProviderJSONValue.self, from: updatedData)
-        let permissions = try await LocalCodexAuthFileSystem().permissions(at: authURL)
+        let updatedFile = try await LocalCodexAuthFileSystem().secureRead(at: authURL)
+        let updatedJSON = try JSONDecoder().decode(ProviderJSONValue.self, from: updatedFile.data)
         let remainingFiles = try fileManager.contentsOfDirectory(atPath: codexDirectory.path)
 
         XCTAssertTrue(updatedJSON.string(at: ["tokens", "access_token"]) == alternateAccessToken)
         XCTAssertTrue(updatedJSON.string(at: ["tokens", "refresh_token"]) == refreshToken)
         XCTAssertEqual(updatedJSON.string(at: ["profile", "name"]), "kept")
-        XCTAssertEqual(permissions, 0o600)
-        XCTAssertEqual(permissions & 0o077, 0)
+        XCTAssertEqual(updatedFile.metadata, originalMetadata)
+        XCTAssertEqual(updatedFile.metadata.ownerID, getuid())
+        XCTAssertEqual(updatedFile.metadata.groupID, preservedGroupID)
+        XCTAssertNotEqual(updatedFile.metadata.groupID, getgid())
+        XCTAssertEqual(updatedFile.metadata.permissions, 0o600)
+        XCTAssertEqual(updatedFile.metadata.permissions & 0o077, 0)
         XCTAssertEqual(remainingFiles, ["auth.json"])
+    }
+
+    func testLocalSecureReadRejectsSymlinkPermissiveAndNonRegularFiles() async throws {
+        let fileManager = FileManager.default
+        let temporaryRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("codex-secure-read-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? fileManager.removeItem(at: temporaryRoot)
+        }
+
+        let permissiveURL = temporaryRoot.appendingPathComponent("permissive.json")
+        let symlinkURL = temporaryRoot.appendingPathComponent("auth.json")
+        let directoryURL = temporaryRoot.appendingPathComponent("auth-directory", isDirectory: true)
+        try authJSON().write(to: permissiveURL)
+        try fileManager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: permissiveURL.path)
+        try fileManager.createSymbolicLink(at: symlinkURL, withDestinationURL: permissiveURL)
+        try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: false)
+
+        do {
+            _ = try await LocalCodexAuthFileSystem().secureRead(at: permissiveURL)
+            XCTFail("Expected permissive auth file rejection.")
+        } catch CodexAuthFileSystemError.insecureFile {
+        } catch {
+            XCTFail("Expected insecure-file failure for permissive auth file.")
+        }
+
+        do {
+            _ = try await LocalCodexAuthFileSystem().secureRead(at: symlinkURL)
+            XCTFail("Expected symlink auth file rejection.")
+        } catch CodexAuthFileSystemError.insecureFile {
+        } catch {
+            XCTFail("Expected insecure-file failure for symlink auth file.")
+        }
+
+        do {
+            _ = try await LocalCodexAuthFileSystem().secureRead(at: directoryURL)
+            XCTFail("Expected non-regular auth file rejection.")
+        } catch CodexAuthFileSystemError.insecureFile {
+        } catch {
+            XCTFail("Expected insecure-file failure for non-regular auth file.")
+        }
+    }
+
+    func testOwnershipPreservationFailureLeavesCanonicalDocumentUntouched() async throws {
+        let originalData = authJSON(includeUnknownFields: true)
+        let fileSystem = RecordingCodexAuthFileSystem(data: originalData)
+        await fileSystem.setOwnershipPreservationFailureEnabled(true)
+        let store = CodexAuthFileStore(homeDirectory: homeDirectory, fileSystem: fileSystem)
+        let document = try await store.readAuthDocument()
+
+        do {
+            _ = try await store.rotateTokens(
+                in: document,
+                accessToken: alternateAccessToken,
+                refreshToken: rotatedRefreshToken
+            )
+            XCTFail("Expected credential persistence failure.")
+        } catch let failure as ProviderClientFailure {
+            XCTAssertEqual(failure, .credentialPersistence(provider: .codex))
+        } catch {
+            XCTFail("Expected sanitized provider failure.")
+        }
+
+        let canonicalData = await fileSystem.currentData
+        let replacements = await fileSystem.replacements
+        XCTAssertEqual(canonicalData, originalData)
+        XCTAssertEqual(replacements.count, 1)
+        XCTAssertEqual(replacements.first?.metadata, document.metadata)
     }
 
     private func assertRefreshFailure(
@@ -402,62 +504,102 @@ final class CodexUsageProviderTests: XCTestCase {
     private func date(_ rawValue: String) -> Date {
         ProviderJSON.parseISO8601(rawValue)!
     }
+
+    private func alternateSupplementaryGroup() -> gid_t? {
+        let count = getgroups(0, nil)
+        guard count > 0 else {
+            return nil
+        }
+        var groups = [gid_t](repeating: 0, count: Int(count))
+        let loadedCount = groups.withUnsafeMutableBufferPointer { buffer in
+            getgroups(count, buffer.baseAddress)
+        }
+        guard loadedCount == count else {
+            return nil
+        }
+        return groups.first { $0 != getgid() }
+    }
 }
 
 private struct CodexAuthReplacement: Equatable, Sendable {
     var url: URL
     var data: Data
-    var permissions: UInt16
+    var metadata: CodexAuthFileMetadata
 }
 
 private actor RecordingCodexAuthFileSystem: CodexAuthFileSystem {
     private var exists: Bool
     private var data: Data
-    private var mode: UInt16
+    private var metadata: CodexAuthFileMetadata
+    private var dataToSwapAfterSecureRead: Data?
     private var shouldFailReplace = false
-    private(set) var readCount = 0
+    private var shouldFailOwnershipPreservation = false
+    private(set) var secureReadCount = 0
     private(set) var replacements: [CodexAuthReplacement] = []
 
-    init(data: Data, permissions: UInt16 = 0o600, exists: Bool = true) {
+    init(
+        data: Data,
+        permissions: UInt16 = 0o600,
+        ownerID: uid_t = getuid(),
+        groupID: gid_t = getgid(),
+        exists: Bool = true
+    ) {
         self.exists = exists
         self.data = data
-        self.mode = permissions
+        self.metadata = CodexAuthFileMetadata(
+            ownerID: ownerID,
+            groupID: groupID,
+            permissions: permissions
+        )
+    }
+
+    var currentData: Data {
+        data
     }
 
     func setData(_ data: Data) {
         self.data = data
     }
 
+    func swapCanonicalDataAfterNextSecureRead(_ data: Data) {
+        dataToSwapAfterSecureRead = data
+    }
+
     func setReplaceFailureEnabled(_ isEnabled: Bool) {
         shouldFailReplace = isEnabled
     }
 
-    func fileExists(at url: URL) async -> Bool {
-        exists
+    func setOwnershipPreservationFailureEnabled(_ isEnabled: Bool) {
+        shouldFailOwnershipPreservation = isEnabled
     }
 
-    func readData(at url: URL) async throws -> Data {
-        readCount += 1
+    func secureRead(at url: URL) async throws -> CodexSecureAuthFile {
+        secureReadCount += 1
         guard exists else {
-            throw URLError(.fileDoesNotExist)
+            throw CodexAuthFileSystemError.notFound
         }
-        return data
+        guard metadata.permissions & 0o077 == 0 else {
+            throw CodexAuthFileSystemError.insecureFile
+        }
+        let file = CodexSecureAuthFile(data: data, metadata: metadata)
+        if let dataToSwapAfterSecureRead {
+            data = dataToSwapAfterSecureRead
+            self.dataToSwapAfterSecureRead = nil
+        }
+        return file
     }
 
-    func permissions(at url: URL) async throws -> UInt16 {
-        guard exists else {
-            throw URLError(.fileDoesNotExist)
-        }
-        return mode
-    }
-
-    func replaceItem(at url: URL, with data: Data, preserving permissions: UInt16) async throws {
-        replacements.append(CodexAuthReplacement(url: url, data: data, permissions: permissions))
-        if shouldFailReplace {
+    func replaceItem(
+        at url: URL,
+        with data: Data,
+        preserving metadata: CodexAuthFileMetadata
+    ) async throws {
+        replacements.append(CodexAuthReplacement(url: url, data: data, metadata: metadata))
+        if shouldFailOwnershipPreservation || shouldFailReplace {
             throw URLError(.cannotWriteToFile)
         }
         self.data = data
-        self.mode = permissions
+        self.metadata = metadata
     }
 }
 

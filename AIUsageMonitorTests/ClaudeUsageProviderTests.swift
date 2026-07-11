@@ -1,9 +1,23 @@
+import Security
 import XCTest
 @testable import AIUsageMonitor
 
 final class ClaudeUsageProviderTests: XCTestCase {
     private let token = "fake-claude-access-token"
     private let checkedAt = Date(timeIntervalSince1970: 1_783_756_800)
+
+    func testProductionKeychainQueryTargetsCurrentAccountExactly() {
+        let reader = KeychainClaudeCredentialReader()
+        let query = reader.query
+
+        XCTAssertEqual(reader.account, NSUserName())
+        XCTAssertEqual(query.count, 5)
+        XCTAssertEqual(query[kSecClass as String] as? String, kSecClassGenericPassword as String)
+        XCTAssertEqual(query[kSecAttrService as String] as? String, "Claude Code-credentials")
+        XCTAssertEqual(query[kSecAttrAccount as String] as? String, NSUserName())
+        XCTAssertEqual(query[kSecReturnData as String] as? Bool, true)
+        XCTAssertEqual(query[kSecMatchLimit as String] as? String, kSecMatchLimitOne as String)
+    }
 
     func testSuccessfulFetchMapsAllFiveClaudeMetersAndRequestShape() async throws {
         let credentialReader = FakeClaudeCredentialReader(data: credentialJSON(token: token))

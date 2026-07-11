@@ -6,16 +6,25 @@ protocol ClaudeCredentialReading: Sendable {
 }
 
 struct KeychainClaudeCredentialReader: ClaudeCredentialReading {
-    private let service = "Claude Code-credentials"
+    static let service = "Claude Code-credentials"
 
-    func credentialData() async throws -> Data {
-        let query: [String: Any] = [
+    let account: String
+
+    init(account: String = NSUserName()) {
+        self.account = account
+    }
+
+    var query: [String: Any] {
+        [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: Self.service,
+            kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
+    }
 
+    func credentialData() async throws -> Data {
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         guard status != errSecItemNotFound else {

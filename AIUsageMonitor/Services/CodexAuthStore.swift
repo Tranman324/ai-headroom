@@ -11,16 +11,25 @@ protocol CodexAuthFileManaging: Sendable {
 }
 
 protocol CodexAuthFileSystem: Sendable {
-    func fileExists(at url: URL) async -> Bool
-    func readData(at url: URL) async throws -> Data
-    func permissions(at url: URL) async throws -> UInt16
-    func replaceItem(at url: URL, with data: Data, preserving permissions: UInt16) async throws
+    func secureRead(at url: URL) async throws -> CodexSecureAuthFile
+    func replaceItem(at url: URL, with data: Data, preserving metadata: CodexAuthFileMetadata) async throws
+}
+
+struct CodexAuthFileMetadata: Equatable, Sendable {
+    let ownerID: uid_t
+    let groupID: gid_t
+    let permissions: UInt16
+}
+
+struct CodexSecureAuthFile: Equatable, Sendable {
+    let data: Data
+    let metadata: CodexAuthFileMetadata
 }
 
 struct CodexAuthDocument: Equatable, Sendable {
     var url: URL
     var json: ProviderJSONValue
-    var permissions: UInt16
+    var metadata: CodexAuthFileMetadata
     var accessToken: String
     var refreshToken: String
     var accountID: String
@@ -41,28 +50,17 @@ struct CodexAuthFileStore: CodexAuthFileManaging {
     }
 
     func readAuthDocument() async throws -> CodexAuthDocument {
-        guard await fileSystem.fileExists(at: authFileURL) else {
+        let file: CodexSecureAuthFile
+        do {
+            file = try await fileSystem.secureRead(at: authFileURL)
+        } catch CodexAuthFileSystemError.notFound {
             throw ProviderClientFailure.credentialUnavailable(provider: .codex)
-        }
-
-        let mode: UInt16
-        do {
-            mode = try await fileSystem.permissions(at: authFileURL)
-        } catch {
-            throw ProviderClientFailure.credentialUnreadable(provider: .codex)
-        }
-        guard Self.isRestrictive(mode) else {
+        } catch CodexAuthFileSystemError.insecureFile {
             throw ProviderClientFailure.credentialInsecure(provider: .codex)
-        }
-
-        let data: Data
-        do {
-            data = try await fileSystem.readData(at: authFileURL)
         } catch {
             throw ProviderClientFailure.credentialUnreadable(provider: .codex)
         }
-
-        return try Self.decodeDocument(data: data, url: authFileURL, permissions: mode)
+        return try Self.decodeDocument(data: file.data, url: authFileURL, metadata: file.metadata)
     }
 
     func rotateTokens(
@@ -98,15 +96,19 @@ struct CodexAuthFileStore: CodexAuthFileManaging {
         }
 
         do {
-            try await fileSystem.replaceItem(at: document.url, with: data, preserving: document.permissions)
+            try await fileSystem.replaceItem(at: document.url, with: data, preserving: document.metadata)
         } catch {
             throw ProviderClientFailure.credentialPersistence(provider: .codex)
         }
 
-        return try Self.decodeDocument(data: data, url: document.url, permissions: document.permissions)
+        return try Self.decodeDocument(data: data, url: document.url, metadata: document.metadata)
     }
 
-    private static func decodeDocument(data: Data, url: URL, permissions: UInt16) throws -> CodexAuthDocument {
+    private static func decodeDocument(
+        data: Data,
+        url: URL,
+        metadata: CodexAuthFileMetadata
+    ) throws -> CodexAuthDocument {
         let json: ProviderJSONValue
         do {
             json = try JSONDecoder().decode(ProviderJSONValue.self, from: data)
@@ -132,36 +134,84 @@ struct CodexAuthFileStore: CodexAuthFileManaging {
         return CodexAuthDocument(
             url: url,
             json: json,
-            permissions: permissions,
+            metadata: metadata,
             accessToken: trimmedAccessToken,
             refreshToken: trimmedRefreshToken,
             accountID: trimmedAccountID
         )
     }
-
-    private static func isRestrictive(_ mode: UInt16) -> Bool {
-        mode & 0o077 == 0
-    }
 }
 
 struct LocalCodexAuthFileSystem: CodexAuthFileSystem {
-    func fileExists(at url: URL) async -> Bool {
-        FileManager.default.fileExists(atPath: url.path)
-    }
-
-    func readData(at url: URL) async throws -> Data {
-        try Data(contentsOf: url)
-    }
-
-    func permissions(at url: URL) async throws -> UInt16 {
-        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-        guard let permissions = attributes[.posixPermissions] as? NSNumber else {
-            throw LocalCodexAuthFileSystemError.missingPermissions
+    func secureRead(at url: URL) async throws -> CodexSecureAuthFile {
+        let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else {
+            switch errno {
+            case ENOENT:
+                throw CodexAuthFileSystemError.notFound
+            case ELOOP:
+                throw CodexAuthFileSystemError.insecureFile
+            default:
+                throw CodexAuthFileSystemError.openFailed
+            }
         }
-        return UInt16(truncatingIfNeeded: permissions.uint16Value) & 0o777
+        defer {
+            close(descriptor)
+        }
+
+        var status = stat()
+        while fstat(descriptor, &status) != 0 {
+            guard errno == EINTR else {
+                throw CodexAuthFileSystemError.statFailed
+            }
+        }
+        guard status.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else {
+            throw CodexAuthFileSystemError.insecureFile
+        }
+
+        let permissions = UInt16(status.st_mode & mode_t(0o777))
+        guard Self.isRestrictive(permissions) else {
+            throw CodexAuthFileSystemError.insecureFile
+        }
+
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 8_192)
+        while true {
+            let bytesRead = buffer.withUnsafeMutableBytes { bytes in
+                Darwin.read(descriptor, bytes.baseAddress, bytes.count)
+            }
+            if bytesRead > 0 {
+                data.append(contentsOf: buffer.prefix(bytesRead))
+                continue
+            }
+            if bytesRead == 0 {
+                break
+            }
+            if errno == EINTR {
+                continue
+            }
+            throw CodexAuthFileSystemError.readFailed
+        }
+
+        return CodexSecureAuthFile(
+            data: data,
+            metadata: CodexAuthFileMetadata(
+                ownerID: status.st_uid,
+                groupID: status.st_gid,
+                permissions: permissions
+            )
+        )
     }
 
-    func replaceItem(at url: URL, with data: Data, preserving permissions: UInt16) async throws {
+    func replaceItem(
+        at url: URL,
+        with data: Data,
+        preserving metadata: CodexAuthFileMetadata
+    ) async throws {
+        guard Self.isRestrictive(metadata.permissions) else {
+            throw CodexAuthFileSystemError.insecureFile
+        }
+
         let directory = url.deletingLastPathComponent()
         let temporaryURL = directory.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
         var shouldCleanUp = true
@@ -173,7 +223,7 @@ struct LocalCodexAuthFileSystem: CodexAuthFileSystem {
 
         let fd = open(temporaryURL.path, O_WRONLY | O_CREAT | O_EXCL, mode_t(S_IRUSR | S_IWUSR))
         guard fd >= 0 else {
-            throw LocalCodexAuthFileSystemError.openFailed
+            throw CodexAuthFileSystemError.openFailed
         }
 
         var shouldClose = true
@@ -181,6 +231,13 @@ struct LocalCodexAuthFileSystem: CodexAuthFileSystem {
             if shouldClose {
                 close(fd)
             }
+        }
+
+        guard fchown(fd, metadata.ownerID, metadata.groupID) == 0 else {
+            throw CodexAuthFileSystemError.chownFailed
+        }
+        guard fchmod(fd, mode_t(metadata.permissions)) == 0 else {
+            throw CodexAuthFileSystemError.chmodFailed
         }
 
         try data.withUnsafeBytes { buffer in
@@ -191,35 +248,45 @@ struct LocalCodexAuthFileSystem: CodexAuthFileSystem {
             var written = 0
             while written < buffer.count {
                 let result = Darwin.write(fd, baseAddress.advanced(by: written), buffer.count - written)
-                guard result >= 0 else {
-                    throw LocalCodexAuthFileSystemError.writeFailed
+                if result > 0 {
+                    written += result
+                    continue
                 }
-                written += result
+                if result < 0, errno == EINTR {
+                    continue
+                }
+                throw CodexAuthFileSystemError.writeFailed
             }
         }
 
-        guard fchmod(fd, mode_t(permissions)) == 0 else {
-            throw LocalCodexAuthFileSystemError.chmodFailed
-        }
-        guard fsync(fd) == 0 else {
-            throw LocalCodexAuthFileSystemError.fsyncFailed
-        }
-        guard close(fd) == 0 else {
-            shouldClose = false
-            throw LocalCodexAuthFileSystemError.closeFailed
+        while fsync(fd) != 0 {
+            guard errno == EINTR else {
+                throw CodexAuthFileSystemError.fsyncFailed
+            }
         }
         shouldClose = false
+        guard close(fd) == 0 else {
+            throw CodexAuthFileSystemError.closeFailed
+        }
 
         guard rename(temporaryURL.path, url.path) == 0 else {
-            throw LocalCodexAuthFileSystemError.renameFailed
+            throw CodexAuthFileSystemError.renameFailed
         }
         shouldCleanUp = false
     }
+
+    private static func isRestrictive(_ mode: UInt16) -> Bool {
+        mode & 0o077 == 0
+    }
 }
 
-private enum LocalCodexAuthFileSystemError: Error {
-    case missingPermissions
+enum CodexAuthFileSystemError: Error {
+    case notFound
+    case insecureFile
     case openFailed
+    case statFailed
+    case readFailed
+    case chownFailed
     case writeFailed
     case chmodFailed
     case fsyncFailed
