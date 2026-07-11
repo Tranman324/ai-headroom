@@ -4,7 +4,7 @@ enum AppCompositionRoot {
     static func production() -> AppDependencies {
         AppDependencies(
             providers: [
-                PlaceholderProviderClient(provider: .claude),
+                ClaudeUsageProvider(),
                 PlaceholderProviderClient(provider: .codex)
             ],
             historyStore: InMemoryHistoryStore(),
