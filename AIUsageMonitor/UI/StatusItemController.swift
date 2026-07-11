@@ -95,20 +95,46 @@ enum StatusContextMenuFactory {
 }
 
 @MainActor
+protocol StatusContextMenuPresenting {
+    func present(_ menu: NSMenu, from statusItem: NSStatusItem)
+}
+
+@MainActor
+final class AppKitStatusContextMenuPresenter: StatusContextMenuPresenting {
+    typealias MenuActivation = @MainActor (NSStatusItem) -> Void
+
+    private let activateMenu: MenuActivation
+
+    init(activateMenu: @escaping MenuActivation = { statusItem in
+        statusItem.button?.performClick(nil)
+    }) {
+        self.activateMenu = activateMenu
+    }
+
+    func present(_ menu: NSMenu, from statusItem: NSStatusItem) {
+        statusItem.menu = menu
+        defer { statusItem.menu = nil }
+        activateMenu(statusItem)
+    }
+}
+
+@MainActor
 final class StatusItemController: NSObject, NSPopoverDelegate {
     private let store: UsageMonitorStore
     private let statusBar: NSStatusBar
-    private let statusItem: NSStatusItem
+    private(set) var statusItem: NSStatusItem
     private(set) var popover: NSPopover
     private(set) var eventView: StatusItemEventView?
     private let now: () -> Date
     private let popoverConfiguration: UsagePopoverConfiguration
+    private let contextMenuPresenter: any StatusContextMenuPresenting
     private var cancellables: Set<AnyCancellable> = []
 
     init(
         store: UsageMonitorStore,
         statusBar: NSStatusBar = .system,
         popoverConfiguration: UsagePopoverConfiguration = .production,
+        contextMenuPresenter: (any StatusContextMenuPresenting)? = nil,
         now: @escaping () -> Date = Date.init
     ) {
         self.store = store
@@ -117,6 +143,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         self.popover = NSPopover()
         self.now = now
         self.popoverConfiguration = popoverConfiguration
+        self.contextMenuPresenter = contextMenuPresenter ?? AppKitStatusContextMenuPresenter()
         super.init()
 
         configureButton()
@@ -253,9 +280,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             target: self,
             launchAtLogin: store.settings.launchAtLogin
         )
-        statusItem.menu = menu
-        statusItem.button?.performClick(nil)
-        statusItem.menu = nil
+        contextMenuPresenter.present(menu, from: statusItem)
     }
 
     private func run(_ command: AppIntentCommand) {
