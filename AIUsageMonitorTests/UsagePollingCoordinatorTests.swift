@@ -292,8 +292,20 @@ final class UsagePollingCoordinatorTests: XCTestCase {
             await store.startMonitoring()
         }
         await settingsStore.waitForLoadCount(1)
-        await store.stopMonitoring()
+        let stopProbe = StopCompletionProbe()
+        let stop = Task { @MainActor in
+            await stopProbe.markEntered()
+            await store.stopMonitoring()
+            await stopProbe.markReturned(pruneCount: 0)
+        }
+        await stopProbe.waitUntilEntered()
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        let returnedBeforeRelease = await stopProbe.hasReturned()
+        XCTAssertFalse(returnedBeforeRelease)
         await settingsStore.releaseFirstLoad()
+        await stop.value
         await startup.value
 
         connectivity.set(.offline)
@@ -352,12 +364,29 @@ final class UsagePollingCoordinatorTests: XCTestCase {
             await store.startMonitoring()
         }
         await settingsStore.waitForLoadCount(1)
-        await store.stopMonitoring()
+        let stopProbe = StopCompletionProbe()
+        let stop = Task { @MainActor in
+            await stopProbe.markEntered()
+            await store.stopMonitoring()
+            await stopProbe.markReturned(pruneCount: 0)
+        }
+        await stopProbe.waitUntilEntered()
+        for _ in 0..<20 {
+            await Task.yield()
+        }
 
         let currentStartup = Task { @MainActor in
             await store.startMonitoring()
         }
-        await settingsStore.waitForLoadCount(2)
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        let loadCountBeforeRelease = await settingsStore.loadCount()
+        XCTAssertEqual(loadCountBeforeRelease, 1)
+
+        await settingsStore.releaseFirstLoad()
+        await stop.value
+        await staleStartup.value
         await currentStartup.value
         await waitUntil {
             connectivity.activeObserverCount() == 1
@@ -365,8 +394,6 @@ final class UsagePollingCoordinatorTests: XCTestCase {
                 && clock.activeSleepCount() == 1
         }
 
-        await settingsStore.releaseFirstLoad()
-        await staleStartup.value
         for _ in 0..<20 {
             await Task.yield()
         }
@@ -392,6 +419,121 @@ final class UsagePollingCoordinatorTests: XCTestCase {
         XCTAssertEqual(connectivity.activeObserverCount(), 0)
         XCTAssertEqual(lifecycle.activeObserverCount(), 0)
         XCTAssertEqual(clock.activeSleepCount(), 0)
+    }
+
+    func testStopWaitsForBlockedStartupPruneBeforeReturning() async throws {
+        let history = BlockingPruneHistoryStore()
+        let connectivity = ManualConnectivityMonitor(initialState: .offline)
+        let lifecycle = ManualLifecycleEvents()
+        let clock = ManualClock(now: UsageMonitorFixtures.baseDate.addingTimeInterval(600))
+        let store = makeStore(
+            historyStore: history,
+            clock: clock,
+            connectivityMonitor: connectivity,
+            lifecycleEvents: lifecycle
+        )
+        let stopProbe = StopCompletionProbe()
+
+        let startup = Task { @MainActor in
+            await store.startMonitoring()
+        }
+        await history.waitForPruneStartCount(1)
+        let stop = Task { @MainActor in
+            await stopProbe.markEntered()
+            await store.stopMonitoring()
+            await stopProbe.markReturned(pruneCount: history.pruneCompletionCount())
+        }
+        await stopProbe.waitUntilEntered()
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+
+        let returnedBeforeRelease = await stopProbe.hasReturned()
+        let completionsBeforeRelease = await history.pruneCompletionCount()
+        XCTAssertFalse(returnedBeforeRelease)
+        XCTAssertEqual(completionsBeforeRelease, 0)
+
+        await history.releaseFirstPrune()
+        await stop.value
+        await startup.value
+
+        let pruneCountAtStopReturn = await stopProbe.pruneCountAtReturn()
+        let finalPruneCount = await history.pruneCompletionCount()
+        XCTAssertEqual(pruneCountAtStopReturn, 1)
+        XCTAssertEqual(finalPruneCount, 1)
+        XCTAssertEqual(connectivity.activeObserverCount(), 0)
+        XCTAssertEqual(lifecycle.activeObserverCount(), 0)
+        XCTAssertEqual(clock.activeSleepCount(), 0)
+    }
+
+    func testRestartWaitsForCancelledBlockedStartupBeforeTakingOwnership() async throws {
+        let history = BlockingPruneHistoryStore()
+        let connectivity = ManualConnectivityMonitor(initialState: .online)
+        let lifecycle = ManualLifecycleEvents()
+        let clock = ManualClock(now: UsageMonitorFixtures.baseDate.addingTimeInterval(600))
+        let restartedSnapshot = try XCTUnwrap(UsageMonitorFixtures.warningSnapshot.provider(.claude))
+        let provider = RecordingProviderClient(
+            provider: .claude,
+            results: [.success(restartedSnapshot)]
+        )
+        let store = makeStore(
+            providers: [provider],
+            historyStore: history,
+            clock: clock,
+            connectivityMonitor: connectivity,
+            lifecycleEvents: lifecycle
+        )
+        let stopProbe = StopCompletionProbe()
+
+        let staleStartup = Task { @MainActor in
+            await store.startMonitoring()
+        }
+        await history.waitForPruneStartCount(1)
+        let stop = Task { @MainActor in
+            await stopProbe.markEntered()
+            await store.stopMonitoring()
+            await stopProbe.markReturned(pruneCount: history.pruneCompletionCount())
+        }
+        await stopProbe.waitUntilEntered()
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        let currentStartup = Task { @MainActor in
+            await store.startMonitoring()
+        }
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+
+        let pruneStartsBeforeRelease = await history.pruneStartCount()
+        let fetchesBeforeRelease = await provider.fetchCount()
+        XCTAssertEqual(pruneStartsBeforeRelease, 1)
+        XCTAssertEqual(fetchesBeforeRelease, 0)
+
+        await history.releaseFirstPrune()
+        await stop.value
+        await staleStartup.value
+        await currentStartup.value
+        await waitUntil {
+            connectivity.activeObserverCount() == 1
+                && lifecycle.activeObserverCount() == 1
+                && clock.activeSleepCount() == 1
+        }
+
+        let pruneStartCount = await history.pruneStartCount()
+        let pruneCompletionCount = await history.pruneCompletionCount()
+        let fetchCount = await provider.fetchCount()
+        let records = await history.appendedRecords()
+        XCTAssertEqual(pruneStartCount, 2)
+        XCTAssertEqual(pruneCompletionCount, 2)
+        XCTAssertEqual(fetchCount, 1)
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(connectivity.activeObserverCount(), 1)
+        XCTAssertEqual(lifecycle.activeObserverCount(), 1)
+        XCTAssertEqual(clock.activeSleepCount(), 1)
+        XCTAssertEqual(store.snapshot.provider(.claude)?.meters, restartedSnapshot.meters)
+
+        await store.stopMonitoring()
     }
 
     func testCancellingActivePollDropsLateProviderResultAndHistoryWrite() async throws {
@@ -444,12 +586,20 @@ final class UsagePollingCoordinatorTests: XCTestCase {
             await store.startMonitoring()
         }
         await provider.waitForFetchCount(1)
-        await store.stopMonitoring()
+        let stopProbe = StopCompletionProbe()
+        let stop = Task { @MainActor in
+            await stopProbe.markEntered()
+            await store.stopMonitoring()
+            await stopProbe.markReturned(pruneCount: 0)
+        }
+        await stopProbe.waitUntilEntered()
+        for _ in 0..<20 {
+            await Task.yield()
+        }
 
         let restart = Task { @MainActor in
             await store.startMonitoring()
         }
-        await history.waitForPruneCount(2)
         for _ in 0..<20 {
             await Task.yield()
         }
@@ -457,11 +607,14 @@ final class UsagePollingCoordinatorTests: XCTestCase {
         var fetchCount = await provider.fetchCount()
         var currentConcurrentFetches = await provider.currentConcurrentFetches()
         var maxConcurrentFetches = await provider.maxConcurrentFetches()
+        let stopReturnedBeforeRelease = await stopProbe.hasReturned()
         XCTAssertEqual(fetchCount, 1)
         XCTAssertEqual(currentConcurrentFetches, 1)
         XCTAssertEqual(maxConcurrentFetches, 1)
+        XCTAssertFalse(stopReturnedBeforeRelease)
 
         await provider.releaseOne()
+        await stop.value
         await provider.waitForFetchCount(2)
         fetchCount = await provider.fetchCount()
         currentConcurrentFetches = await provider.currentConcurrentFetches()
@@ -740,12 +893,138 @@ actor BlockingFirstSettingsStore: SettingsStoring {
         saves
     }
 
+    func loadCount() -> Int {
+        loads
+    }
+
     private func resumeLoadWaiters() {
         let ready = loadWaiters.filter { loads >= $0.0 }
         loadWaiters.removeAll { loads >= $0.0 }
         for waiter in ready {
             waiter.1.resume()
         }
+    }
+}
+
+actor BlockingPruneHistoryStore: HistoryStoring {
+    private var storedRecords: [UsageHistoryRecord] = []
+    private var pruneStarts = 0
+    private var pruneCompletions = 0
+    private var firstPruneRelease: CheckedContinuation<Void, Never>?
+    private var pruneStartWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+
+    func append(_ snapshot: CombinedUsageSnapshot) async throws {
+        storedRecords.append(.combinedSnapshot(CombinedSnapshotHistoryRecord(snapshot: snapshot)))
+    }
+
+    func appendProviderSnapshot(_ snapshot: ProviderUsageSnapshot, capturedAt: Date) async throws {
+        storedRecords.append(.providerSnapshot(ProviderSnapshotHistoryRecord(capturedAt: capturedAt, snapshot: snapshot)))
+    }
+
+    func appendProviderFailure(provider: ProviderID, at timestamp: Date, error: SanitizedProviderError) async throws {
+        storedRecords.append(.providerFailure(ProviderFailureHistoryRecord(timestamp: timestamp, provider: provider, error: error)))
+    }
+
+    func records(since startDate: Date) async throws -> [UsageHistoryRecord] {
+        storedRecords.filter { $0.timestamp >= startDate }
+    }
+
+    func snapshots(since startDate: Date) async throws -> [CombinedUsageSnapshot] {
+        try await records(since: startDate).compactMap { record in
+            if case let .combinedSnapshot(snapshotRecord) = record {
+                return snapshotRecord.snapshot
+            }
+            return nil
+        }
+    }
+
+    func latestUsableProviderSnapshots() async throws -> [ProviderID: ProviderUsageSnapshot] {
+        [:]
+    }
+
+    func prune(olderThan cutoffDate: Date) async throws {
+        pruneStarts += 1
+        let currentStart = pruneStarts
+        resumePruneStartWaiters()
+        if currentStart == 1 {
+            await withCheckedContinuation { continuation in
+                firstPruneRelease = continuation
+            }
+        }
+        pruneCompletions += 1
+        storedRecords.removeAll { $0.timestamp < cutoffDate }
+    }
+
+    func waitForPruneStartCount(_ expectedCount: Int) async {
+        if pruneStarts >= expectedCount {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            pruneStartWaiters.append((expectedCount, continuation))
+        }
+    }
+
+    func releaseFirstPrune() {
+        firstPruneRelease?.resume()
+        firstPruneRelease = nil
+    }
+
+    func pruneStartCount() -> Int {
+        pruneStarts
+    }
+
+    func pruneCompletionCount() -> Int {
+        pruneCompletions
+    }
+
+    func appendedRecords() -> [UsageHistoryRecord] {
+        storedRecords
+    }
+
+    private func resumePruneStartWaiters() {
+        let ready = pruneStartWaiters.filter { pruneStarts >= $0.0 }
+        pruneStartWaiters.removeAll { pruneStarts >= $0.0 }
+        for waiter in ready {
+            waiter.1.resume()
+        }
+    }
+}
+
+actor StopCompletionProbe {
+    private var entered = false
+    private var returned = false
+    private var countAtReturn: Int?
+    private var enteredWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func markEntered() {
+        entered = true
+        let waiters = enteredWaiters
+        enteredWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    func waitUntilEntered() async {
+        if entered {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            enteredWaiters.append(continuation)
+        }
+    }
+
+    func markReturned(pruneCount: Int) {
+        returned = true
+        countAtReturn = pruneCount
+    }
+
+    func hasReturned() -> Bool {
+        returned
+    }
+
+    func pruneCountAtReturn() -> Int? {
+        countAtReturn
     }
 }
 

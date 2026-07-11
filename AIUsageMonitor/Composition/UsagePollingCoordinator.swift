@@ -30,6 +30,8 @@ actor UsagePollingCoordinator {
     private var intervalTask: Task<Void, Never>?
     private var connectivityTask: Task<Void, Never>?
     private var lifecycleTask: Task<Void, Never>?
+    private var startupTask: Task<Void, Never>?
+    private var startupTaskGeneration: UInt?
     private var pollTask: Task<Void, Never>?
     private var pollInProgress = false
     private var pendingTrigger: Trigger?
@@ -56,9 +58,47 @@ actor UsagePollingCoordinator {
             return
         }
 
+        if let startupTask {
+            await startupTask.value
+            guard !started else {
+                return
+            }
+        }
+
         started = true
         startupGeneration &+= 1
         let generation = startupGeneration
+        let task = Task {
+            await runStartup(generation: generation)
+        }
+        startupTask = task
+        startupTaskGeneration = generation
+        await task.value
+    }
+
+    func cancel() async {
+        started = false
+        startupGeneration &+= 1
+        let startupTaskToDrain = startupTask
+        startupTaskToDrain?.cancel()
+        intervalTask?.cancel()
+        connectivityTask?.cancel()
+        lifecycleTask?.cancel()
+        pollTask?.cancel()
+        intervalTask = nil
+        connectivityTask = nil
+        lifecycleTask = nil
+        pendingTrigger = nil
+        await startupTaskToDrain?.value
+    }
+
+    private func runStartup(generation: UInt) async {
+        defer {
+            finishStartup(generation: generation)
+        }
+        guard ownsStartup(generation) else {
+            return
+        }
 
         let loadedSettings = (try? await dependencies.settingsStore.loadSettings()) ?? .defaults
         guard ownsStartup(generation) else {
@@ -106,19 +146,6 @@ actor UsagePollingCoordinator {
         if lastConnectivityState == .online {
             await requestPoll(.startup)
         }
-    }
-
-    func cancel() {
-        started = false
-        startupGeneration &+= 1
-        intervalTask?.cancel()
-        connectivityTask?.cancel()
-        lifecycleTask?.cancel()
-        pollTask?.cancel()
-        intervalTask = nil
-        connectivityTask = nil
-        lifecycleTask = nil
-        pendingTrigger = nil
     }
 
     func requestPoll(_ trigger: Trigger) async {
@@ -182,6 +209,14 @@ actor UsagePollingCoordinator {
         started && startupGeneration == generation
     }
 
+    private func finishStartup(generation: UInt) {
+        guard startupTaskGeneration == generation else {
+            return
+        }
+        startupTask = nil
+        startupTaskGeneration = nil
+    }
+
     private func startConnectivityObservation() {
         connectivityTask?.cancel()
         connectivityTask = Task {
@@ -228,7 +263,7 @@ actor UsagePollingCoordinator {
                 }
                 enqueuePoll(.workspaceWake)
             case .willTerminate:
-                cancel()
+                await cancel()
             case .didFinishLaunching, .didBecomeActive, .didResignActive:
                 continue
             }
