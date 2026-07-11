@@ -28,7 +28,7 @@ enum AppIntentCommand: Codable, Equatable, Sendable {
     case showMeterDetail(MeterKind)
     case backFromMeterDetail
     case setHistoryExpanded(Bool)
-    case pauseAlerts(until: Date)
+    case pauseAlertsForOneHour
     case setLaunchAtLogin(Bool)
     case quit
 }

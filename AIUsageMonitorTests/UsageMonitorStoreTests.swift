@@ -73,9 +73,9 @@ final class UsageMonitorStoreTests: XCTestCase {
             loginRegistration: loginRegistration
         )
         let store = UsageMonitorStore(dependencies: dependencies)
-        let expiration = UsageMonitorFixtures.baseDate.addingTimeInterval(600)
+        let expiration = UsageMonitorFixtures.baseDate.addingTimeInterval(12_345 + 60 * 60)
 
-        try await store.handle(.pauseAlerts(until: expiration))
+        try await store.handle(.pauseAlertsForOneHour)
         try await store.handle(.setLaunchAtLogin(true))
 
         let savedSettings = await settingsStore.savedSettings()
@@ -92,7 +92,7 @@ final class UsageMonitorStoreTests: XCTestCase {
         let store = UsageMonitorStore(dependencies: dependencies)
 
         let task = Task { @MainActor in
-            try await store.handle(.pauseAlerts(until: UsageMonitorFixtures.baseDate))
+            try await store.handle(.pauseAlertsForOneHour)
         }
         await settingsStore.waitUntilSaveStarted()
         task.cancel()
@@ -171,6 +171,10 @@ actor RecordingSettingsStore: SettingsStoring {
 
 actor RecordingLoginRegistration: LoginRegistering {
     private var values: [Bool] = []
+
+    func registrationStatus() async -> LaunchAtLoginRegistrationStatus {
+        (values.last ?? false) ? .enabled : .disabled
+    }
 
     func isLaunchAtLoginEnabled() async throws -> Bool {
         values.last ?? false

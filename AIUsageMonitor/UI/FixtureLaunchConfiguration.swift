@@ -93,6 +93,10 @@ struct FixtureLaunchConfiguration {
         scenario?.popoverConfiguration ?? .production
     }
 
+    var shouldStartMonitoring: Bool {
+        scenario == nil
+    }
+
     private static func value(after flag: String, in arguments: [String]) -> String? {
         guard let index = arguments.firstIndex(of: flag) else {
             return nil

@@ -38,6 +38,18 @@ final class AIUsageMonitorAppDelegate: NSObject, NSApplicationDelegate {
             )
             fixtureWindowController?.show()
         }
+
+        if launchConfiguration.shouldStartMonitoring {
+            Task { @MainActor in
+                await store.startMonitoring()
+            }
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        Task { @MainActor in
+            await store.stopMonitoring()
+        }
     }
 }
 

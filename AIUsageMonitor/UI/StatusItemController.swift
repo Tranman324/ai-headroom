@@ -125,7 +125,6 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private(set) var statusItem: NSStatusItem
     private(set) var popover: NSPopover
     private(set) var eventView: StatusItemEventView?
-    private let now: () -> Date
     private let popoverConfiguration: UsagePopoverConfiguration
     private let contextMenuPresenter: any StatusContextMenuPresenting
     private var cancellables: Set<AnyCancellable> = []
@@ -134,14 +133,12 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         store: UsageMonitorStore,
         statusBar: NSStatusBar = .system,
         popoverConfiguration: UsagePopoverConfiguration = .production,
-        contextMenuPresenter: (any StatusContextMenuPresenting)? = nil,
-        now: @escaping () -> Date = Date.init
+        contextMenuPresenter: (any StatusContextMenuPresenting)? = nil
     ) {
         self.store = store
         self.statusBar = statusBar
         self.statusItem = statusBar.statusItem(withLength: NSStatusItem.variableLength)
         self.popover = NSPopover()
-        self.now = now
         self.popoverConfiguration = popoverConfiguration
         self.contextMenuPresenter = contextMenuPresenter ?? AppKitStatusContextMenuPresenter()
         super.init()
@@ -177,7 +174,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     @objc func pauseAlertsFromMenu(_ sender: NSMenuItem) {
-        run(.pauseAlerts(until: now().addingTimeInterval(60 * 60)))
+        run(.pauseAlertsForOneHour)
     }
 
     @objc func toggleLaunchAtLoginFromMenu(_ sender: NSMenuItem) {

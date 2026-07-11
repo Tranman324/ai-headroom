@@ -138,6 +138,10 @@ struct NoopLifecycleEvents: AppLifecycleEventProviding {
 }
 
 struct UnsupportedLoginRegistration: LoginRegistering {
+    func registrationStatus() async -> LaunchAtLoginRegistrationStatus {
+        .disabled
+    }
+
     func isLaunchAtLoginEnabled() async throws -> Bool {
         false
     }
