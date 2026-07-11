@@ -171,6 +171,7 @@ enum UsageAnalytics {
         samples: [MeterHistorySample],
         kind: MeterKind,
         now: Date? = nil,
+        window: TimeInterval? = nil,
         targetPointCount: Int = defaultChartTargetPointCount
     ) -> [UsageChartPoint] {
         let orderedSamples = samples
@@ -183,8 +184,8 @@ enum UsageAnalytics {
         }
 
         let anchorDate = now ?? latestSample.capturedAt
-        let window = kind.window == .rollingFiveHours ? sessionChartWindow : weeklyChartWindow
-        let windowStart = anchorDate.addingTimeInterval(-window)
+        let chartWindow = window ?? (kind.window == .rollingFiveHours ? sessionChartWindow : weeklyChartWindow)
+        let windowStart = anchorDate.addingTimeInterval(-chartWindow)
         let windowedSamples = orderedSamples.filter { $0.capturedAt >= windowStart && $0.capturedAt <= anchorDate }
         guard !windowedSamples.isEmpty else {
             return []

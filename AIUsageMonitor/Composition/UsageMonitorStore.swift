@@ -2,11 +2,20 @@ import Foundation
 import AppKit
 import SwiftUI
 
+enum HistoryLoadState: Equatable, Sendable {
+    case idle
+    case loading
+    case loaded
+    case failed(String)
+}
+
 @MainActor
 final class UsageMonitorStore: ObservableObject {
     @Published private(set) var snapshot: CombinedUsageSnapshot
     @Published private(set) var settings: MonitorSettings
     @Published private(set) var launchAtLoginStatus: LaunchAtLoginRegistrationStatus
+    @Published private(set) var historicalSnapshots: [CombinedUsageSnapshot]
+    @Published private(set) var historyLoadState: HistoryLoadState
     @Published var navigation: AppNavigationState
 
     private let dependencies: AppDependencies
@@ -16,12 +25,15 @@ final class UsageMonitorStore: ObservableObject {
         dependencies: AppDependencies,
         initialSnapshot: CombinedUsageSnapshot = UsageMonitorFixtures.noDataSnapshot,
         settings: MonitorSettings = .defaults,
+        historicalSnapshots: [CombinedUsageSnapshot] = [],
         navigation: AppNavigationState = AppNavigationState(),
         launchAtLoginStatus: LaunchAtLoginRegistrationStatus = .disabled
     ) {
         self.dependencies = dependencies
         self.snapshot = initialSnapshot
         self.settings = settings
+        self.historicalSnapshots = historicalSnapshots
+        self.historyLoadState = .idle
         self.navigation = navigation
         self.launchAtLoginStatus = launchAtLoginStatus
         self.coordinator = UsagePollingCoordinator(
@@ -58,6 +70,22 @@ final class UsageMonitorStore: ObservableObject {
         await coordinator?.replaceSettings(loadedSettings)
     }
 
+    func loadHistory(since startDate: Date) async {
+        historyLoadState = .loading
+
+        do {
+            let snapshots = try await dependencies.historyStore.snapshots(since: startDate)
+            try Task.checkCancellation()
+            historicalSnapshots = snapshots
+            historyLoadState = .loaded
+        } catch is CancellationError {
+            historyLoadState = .idle
+        } catch {
+            historicalSnapshots = []
+            historyLoadState = .failed("History unavailable")
+        }
+    }
+
     func handle(_ command: AppIntentCommand) async throws {
         switch command {
         case .refresh:
@@ -70,11 +98,31 @@ final class UsageMonitorStore: ObservableObject {
             navigation.meterRoute = .detail(kind)
         case .backFromMeterDetail:
             navigation.meterRoute = .list
+        case let .setMeterDetailRange(range):
+            navigation.detailRange = range
         case let .setHistoryExpanded(isExpanded):
             navigation.isHistoryExpanded = isExpanded
         case .pauseAlertsForOneHour:
             var updatedSettings = settings
             updatedSettings.alertPauseExpiration = dependencies.clock.now.addingTimeInterval(60 * 60)
+            try await dependencies.settingsStore.saveSettings(updatedSettings)
+            settings = updatedSettings
+            await coordinator?.replaceSettings(updatedSettings)
+        case let .setPollingInterval(interval):
+            var updatedSettings = settings
+            updatedSettings.pollingInterval = interval
+            try await dependencies.settingsStore.saveSettings(updatedSettings)
+            settings = updatedSettings
+            await coordinator?.replaceSettings(updatedSettings)
+        case let .setAlertThreshold(threshold):
+            var updatedSettings = settings
+            updatedSettings.alertThreshold = threshold
+            try await dependencies.settingsStore.saveSettings(updatedSettings)
+            settings = updatedSettings
+            await coordinator?.replaceSettings(updatedSettings)
+        case let .setHistoryRetention(retention):
+            var updatedSettings = settings
+            updatedSettings.historyRetention = retention
             try await dependencies.settingsStore.saveSettings(updatedSettings)
             settings = updatedSettings
             await coordinator?.replaceSettings(updatedSettings)

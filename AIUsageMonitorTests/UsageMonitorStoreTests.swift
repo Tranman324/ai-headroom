@@ -99,6 +99,40 @@ final class UsageMonitorStoreTests: XCTestCase {
         XCTAssertEqual(requestedLoginValues, [true])
     }
 
+    func testSettingsCommandsPersistThroughInjectedSettingsStore() async throws {
+        let settingsStore = RecordingSettingsStore()
+        let dependencies = TestDependencyFactory.make(settingsStore: settingsStore)
+        let store = UsageMonitorStore(dependencies: dependencies)
+
+        try await store.handle(.setPollingInterval(try PollingInterval(minutes: 7)))
+        try await store.handle(.setAlertThreshold(try AlertThreshold(percentage: 90)))
+        try await store.handle(.setHistoryRetention(try HistoryRetention(days: 120)))
+
+        let savedSettings = await settingsStore.savedSettings()
+        XCTAssertEqual(savedSettings.count, 3)
+        XCTAssertEqual(savedSettings[0].pollingInterval.minutes, 7)
+        XCTAssertEqual(savedSettings[1].alertThreshold.percentage, 90)
+        XCTAssertEqual(savedSettings[2].historyRetention.days, 120)
+        XCTAssertEqual(store.settings.pollingInterval.minutes, 7)
+        XCTAssertEqual(store.settings.alertThreshold.percentage, 90)
+        XCTAssertEqual(store.settings.historyRetention.days, 120)
+    }
+
+    func testHistoryLoadingUsesInjectedHistoryStore() async throws {
+        let historyStore = InMemoryHistoryStore(initialSnapshots: UsageMonitorFixtures.expandedHistorySnapshots)
+        let dependencies = TestDependencyFactory.make(historyStore: historyStore)
+        let store = UsageMonitorStore(
+            dependencies: dependencies,
+            initialSnapshot: UsageMonitorFixtures.criticalSnapshot
+        )
+
+        await store.loadHistory(since: UsageMonitorFixtures.criticalSnapshot.capturedAt.addingTimeInterval(-UsagePresentation.historyLookback))
+
+        XCTAssertEqual(store.historyLoadState, .loaded)
+        XCTAssertFalse(store.historicalSnapshots.isEmpty)
+        XCTAssertLessThanOrEqual(store.historicalSnapshots.first?.capturedAt ?? .distantFuture, UsageMonitorFixtures.criticalSnapshot.capturedAt)
+    }
+
     func testCommandCancellationIsCallerOwned() async throws {
         let settingsStore = CancellableSettingsStore()
         let dependencies = TestDependencyFactory.make(settingsStore: settingsStore)

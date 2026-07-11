@@ -25,11 +25,27 @@ final class FixtureIntegrityTests: XCTestCase {
         XCTAssertTrue(UsageMonitorFixtures.noDataSnapshot.meters.isEmpty)
     }
 
-    func testNoDataFixtureOwnsEmptyHistoryWhilePopulatedFixturesUseTypedSeries() {
-        XCTAssertEqual(UsageFixtureScenario.noData.popoverConfiguration.history, .empty)
-        XCTAssertTrue(UsageFixtureScenario.noData.popoverConfiguration.history.series.isEmpty)
-        XCTAssertEqual(UsageFixtureScenario.critical.popoverConfiguration.history.series.count, 4)
-        XCTAssertEqual(UsageFixtureScenario.normal.popoverConfiguration.history.series, MockHistoryData.series)
+    func testFixtureScenariosOwnDeterministicHistoryAndNavigationStates() {
+        XCTAssertTrue(UsageFixtureScenario.noData.historySnapshots.isEmpty)
+        XCTAssertTrue(UsageFixtureScenario.noHistory.historySnapshots.isEmpty)
+        XCTAssertFalse(UsageFixtureScenario.critical.historySnapshots.isEmpty)
+
+        let historySeries = UsagePresentation.historySeries(
+            from: UsageFixtureScenario.expandedHistory.historySnapshots,
+            now: UsageFixtureScenario.expandedHistory.snapshot.capturedAt
+        )
+        XCTAssertEqual(historySeries.count, 4)
+        XCTAssertTrue(historySeries.flatMap(\.points).contains { $0.preservesResetDiscontinuity })
+
+        XCTAssertEqual(
+            UsageFixtureScenario.preResetExhaustion.navigation(startsWithHistoryExpanded: false),
+            AppNavigationState(meterRoute: .detail(.claudeWeekFable), detailRange: .sevenDays)
+        )
+        XCTAssertEqual(
+            UsageFixtureScenario.rangeTwentyFourHours.navigation(startsWithHistoryExpanded: false),
+            AppNavigationState(meterRoute: .detail(.claudeWeekFable), detailRange: .twentyFourHours)
+        )
+        XCTAssertTrue(UsageFixtureScenario.settings.navigation(startsWithHistoryExpanded: false).isSettingsPresented)
     }
 
     func testFixturesContainNoCredentialShapedSecrets() throws {
@@ -41,9 +57,19 @@ final class FixtureIntegrityTests: XCTestCase {
             UsageMonitorFixtures.criticalSnapshot,
             UsageMonitorFixtures.staleLastKnownGoodSnapshot,
             UsageMonitorFixtures.providerErrorOtherHealthySnapshot,
-            UsageMonitorFixtures.noDataSnapshot
+            UsageMonitorFixtures.noDataSnapshot,
+            UsageMonitorFixtures.safeProjectionSnapshot
         ])
-        let encoded = String(decoding: data, as: UTF8.self).lowercased()
+        let historyData = try encoder.encode([
+            UsageMonitorFixtures.expandedHistorySnapshots,
+            UsageMonitorFixtures.preResetExhaustionHistory,
+            UsageMonitorFixtures.safeProjectionHistory,
+            UsageMonitorFixtures.insufficientBurnHistory
+        ])
+        let encoded = (
+            String(decoding: data, as: UTF8.self)
+                + String(decoding: historyData, as: UTF8.self)
+        ).lowercased()
 
         XCTAssertFalse(encoded.contains("access_token"))
         XCTAssertFalse(encoded.contains("refresh_token"))

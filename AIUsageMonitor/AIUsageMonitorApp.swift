@@ -18,6 +18,7 @@ final class AIUsageMonitorAppDelegate: NSObject, NSApplicationDelegate {
         dependencies: launchConfiguration.dependencies,
         initialSnapshot: launchConfiguration.initialSnapshot,
         settings: launchConfiguration.settings,
+        historicalSnapshots: launchConfiguration.initialHistorySnapshots,
         navigation: launchConfiguration.navigation
     )
 

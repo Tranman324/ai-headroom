@@ -65,6 +65,88 @@ final class UsagePresentationTests: XCTestCase {
         XCTAssertFalse(noData.accessibilityLabel.contains("0%"))
     }
 
+    func testExpandedHistorySeriesComeFromStoredSnapshotsAndPreserveResetMarkers() {
+        let series = UsagePresentation.historySeries(
+            from: UsageMonitorFixtures.expandedHistorySnapshots,
+            now: UsageMonitorFixtures.criticalSnapshot.capturedAt
+        )
+
+        XCTAssertEqual(series.map(\.id), [
+            MeterKind.claudeWeekAll.rawValue,
+            MeterKind.claudeWeekFable.rawValue,
+            MeterKind.claudeWeekSonnet.rawValue,
+            MeterKind.claudeWeekHaiku.rawValue
+        ])
+        XCTAssertTrue(series.allSatisfy { (30 ... 46).contains($0.points.count) })
+        XCTAssertTrue(series.flatMap(\.points).contains { $0.preservesResetDiscontinuity })
+        XCTAssertNotEqual(series[0].points.map(\.utilization), series[1].points.map(\.utilization))
+        XCTAssertTrue(UsagePresentation.historySeries(from: [], now: UsageMonitorFixtures.criticalSnapshot.capturedAt).isEmpty)
+    }
+
+    func testDetailPresentationUsesHistoryForCriticalProjectionAndStats() throws {
+        let detail = try XCTUnwrap(UsagePresentation.detailPresentation(
+            kind: .claudeWeekFable,
+            snapshot: UsageMonitorFixtures.criticalSnapshot,
+            historicalSnapshots: UsageMonitorFixtures.preResetExhaustionHistory,
+            range: .sevenDays
+        ))
+
+        XCTAssertEqual(detail.kind, .claudeWeekFable)
+        XCTAssertEqual(detail.title, "Claude Week Fable")
+        XCTAssertEqual(detail.range, .sevenDays)
+        XCTAssertTrue(detail.showsRangeSelector)
+        XCTAssertEqual(detail.bannerTone, .critical)
+        XCTAssertEqual(detail.projection?.isCritical, true)
+        XCTAssertEqual(detail.stats.map(\.label), ["BURN", "USED", "RESETS"])
+        XCTAssertEqual(detail.stats[1].value, "83%")
+        XCTAssertGreaterThan(detail.points.count, 30)
+        XCTAssertTrue(detail.points.contains { $0.preservesResetDiscontinuity })
+    }
+
+    func testSafeProjectionDoesNotUseCriticalTone() throws {
+        let detail = try XCTUnwrap(UsagePresentation.detailPresentation(
+            kind: .codexWeek,
+            snapshot: UsageMonitorFixtures.safeProjectionSnapshot,
+            historicalSnapshots: UsageMonitorFixtures.safeProjectionHistory,
+            range: .sevenDays
+        ))
+
+        XCTAssertEqual(detail.bannerTone, .safe)
+        XCTAssertEqual(detail.projection?.isCritical, false)
+        XCTAssertFalse(detail.bannerText.lowercased().contains("hit 100%"))
+    }
+
+    func testWeeklyRangesChangeChartWindowAndSessionHidesSelector() throws {
+        let weeklyRanges = MeterDetailRange.allCases.map { range in
+            UsagePresentation.detailPresentation(
+                kind: .claudeWeekFable,
+                snapshot: UsageMonitorFixtures.criticalSnapshot,
+                historicalSnapshots: UsageMonitorFixtures.preResetExhaustionHistory,
+                range: range
+            )
+        }
+        let unwrapped = try weeklyRanges.map { try XCTUnwrap($0) }
+
+        XCTAssertEqual(unwrapped.map(\.range), MeterDetailRange.allCases)
+        XCTAssertLessThan(unwrapped[0].points.count, unwrapped[2].points.count)
+        for detail in unwrapped {
+            let firstPoint = try XCTUnwrap(detail.points.first)
+            XCTAssertGreaterThanOrEqual(
+                firstPoint.capturedAt,
+                UsageMonitorFixtures.criticalSnapshot.capturedAt.addingTimeInterval(-detail.range.duration)
+            )
+        }
+
+        let session = try XCTUnwrap(UsagePresentation.detailPresentation(
+            kind: .claudeSession,
+            snapshot: UsageMonitorFixtures.criticalSnapshot,
+            historicalSnapshots: UsageMonitorFixtures.preResetExhaustionHistory,
+            range: .sevenDays
+        ))
+        XCTAssertEqual(session.range, .twentyFourHours)
+        XCTAssertFalse(session.showsRangeSelector)
+    }
+
     private func meter(_ kind: MeterKind, percent: Double) -> UsageMeterSnapshot {
         UsageMeterSnapshot(
             kind: kind,
