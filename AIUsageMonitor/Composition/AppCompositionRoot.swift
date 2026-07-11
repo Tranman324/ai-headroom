@@ -7,8 +7,8 @@ enum AppCompositionRoot {
                 PlaceholderProviderClient(provider: .claude),
                 PlaceholderProviderClient(provider: .codex)
             ],
-            historyStore: InMemoryHistoryStore(),
-            settingsStore: InMemorySettingsStore(initialSettings: .defaults),
+            historyStore: LocalHistoryStore(),
+            settingsStore: LocalSettingsStore(),
             clock: SystemClock(),
             connectivityMonitor: StaticConnectivityMonitor(state: .online),
             lifecycleEvents: NoopLifecycleEvents(),

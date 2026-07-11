@@ -7,7 +7,11 @@ protocol UsageProviderFetching: Sendable {
 
 protocol HistoryStoring: Sendable {
     func append(_ snapshot: CombinedUsageSnapshot) async throws
+    func appendProviderSnapshot(_ snapshot: ProviderUsageSnapshot, capturedAt: Date) async throws
+    func appendProviderFailure(provider: ProviderID, at timestamp: Date, error: SanitizedProviderError) async throws
+    func records(since startDate: Date) async throws -> [UsageHistoryRecord]
     func snapshots(since startDate: Date) async throws -> [CombinedUsageSnapshot]
+    func latestUsableProviderSnapshots() async throws -> [ProviderID: ProviderUsageSnapshot]
     func prune(olderThan cutoffDate: Date) async throws
 }
 

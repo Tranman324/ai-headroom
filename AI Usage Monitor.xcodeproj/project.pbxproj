@@ -18,6 +18,9 @@
 		B10000000000000000000018 /* AppCompositionRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* AppCompositionRoot.swift */; };
 		B10000000000000000000019 /* UsageMonitorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* UsageMonitorStore.swift */; };
 		B1000000000000000000001A /* UsageMonitorFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001A /* UsageMonitorFixtures.swift */; };
+		B1000000000000000000001B /* HistoryRecords.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001B /* HistoryRecords.swift */; };
+		B1000000000000000000001C /* UsageAnalytics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001C /* UsageAnalytics.swift */; };
+		B1000000000000000000001D /* LocalPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001D /* LocalPersistence.swift */; };
 		B10000000000000000000020 /* MeterKindTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000020 /* MeterKindTests.swift */; };
 		B10000000000000000000021 /* FixtureIntegrityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000021 /* FixtureIntegrityTests.swift */; };
 		B10000000000000000000022 /* SettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000022 /* SettingsTests.swift */; };
@@ -26,6 +29,9 @@
 		B10000000000000000000025 /* UsageMonitorStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000025 /* UsageMonitorStoreTests.swift */; };
 		B10000000000000000000026 /* LifecycleContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000026 /* LifecycleContractTests.swift */; };
 		B10000000000000000000027 /* AIUsageMonitorUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000027 /* AIUsageMonitorUITests.swift */; };
+		B10000000000000000000028 /* LocalHistoryStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000028 /* LocalHistoryStoreTests.swift */; };
+		B10000000000000000000029 /* LocalSettingsStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000029 /* LocalSettingsStoreTests.swift */; };
+		B1000000000000000000002A /* UsageAnalyticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000002A /* UsageAnalyticsTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -60,6 +66,9 @@
 		A10000000000000000000018 /* AppCompositionRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCompositionRoot.swift; sourceTree = "<group>"; };
 		A10000000000000000000019 /* UsageMonitorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMonitorStore.swift; sourceTree = "<group>"; };
 		A1000000000000000000001A /* UsageMonitorFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMonitorFixtures.swift; sourceTree = "<group>"; };
+		A1000000000000000000001B /* HistoryRecords.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryRecords.swift; sourceTree = "<group>"; };
+		A1000000000000000000001C /* UsageAnalytics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageAnalytics.swift; sourceTree = "<group>"; };
+		A1000000000000000000001D /* LocalPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPersistence.swift; sourceTree = "<group>"; };
 		A10000000000000000000020 /* MeterKindTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeterKindTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000021 /* FixtureIntegrityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureIntegrityTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000022 /* SettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTests.swift; sourceTree = "<group>"; };
@@ -68,6 +77,9 @@
 		A10000000000000000000025 /* UsageMonitorStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMonitorStoreTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000026 /* LifecycleContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LifecycleContractTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000027 /* AIUsageMonitorUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIUsageMonitorUITests.swift; sourceTree = "<group>"; };
+		A10000000000000000000028 /* LocalHistoryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalHistoryStoreTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000029 /* LocalSettingsStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSettingsStoreTests.swift; sourceTree = "<group>"; };
+		A1000000000000000000002A /* UsageAnalyticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageAnalyticsTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -134,6 +146,8 @@
 				A10000000000000000000012 /* ProviderState.swift */,
 				A10000000000000000000013 /* Settings.swift */,
 				A10000000000000000000014 /* Navigation.swift */,
+				A1000000000000000000001B /* HistoryRecords.swift */,
+				A1000000000000000000001C /* UsageAnalytics.swift */,
 			);
 			path = Domain;
 			sourceTree = "<group>";
@@ -143,6 +157,7 @@
 			children = (
 				A10000000000000000000015 /* ServiceProtocols.swift */,
 				A10000000000000000000016 /* PlaceholderServices.swift */,
+				A1000000000000000000001D /* LocalPersistence.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -175,6 +190,9 @@
 				A10000000000000000000024 /* CompositionTests.swift */,
 				A10000000000000000000025 /* UsageMonitorStoreTests.swift */,
 				A10000000000000000000026 /* LifecycleContractTests.swift */,
+				A10000000000000000000028 /* LocalHistoryStoreTests.swift */,
+				A10000000000000000000029 /* LocalSettingsStoreTests.swift */,
+				A1000000000000000000002A /* UsageAnalyticsTests.swift */,
 			);
 			path = AIUsageMonitorTests;
 			sourceTree = "<group>";
@@ -323,9 +341,12 @@
 				B10000000000000000000012 /* ProviderState.swift in Sources */,
 				B10000000000000000000013 /* Settings.swift in Sources */,
 				B10000000000000000000014 /* Navigation.swift in Sources */,
+				B1000000000000000000001B /* HistoryRecords.swift in Sources */,
+				B1000000000000000000001C /* UsageAnalytics.swift in Sources */,
 				B1000000000000000000001A /* UsageMonitorFixtures.swift in Sources */,
 				B10000000000000000000015 /* ServiceProtocols.swift in Sources */,
 				B10000000000000000000016 /* PlaceholderServices.swift in Sources */,
+				B1000000000000000000001D /* LocalPersistence.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -340,6 +361,9 @@
 				B10000000000000000000024 /* CompositionTests.swift in Sources */,
 				B10000000000000000000025 /* UsageMonitorStoreTests.swift in Sources */,
 				B10000000000000000000026 /* LifecycleContractTests.swift in Sources */,
+				B10000000000000000000028 /* LocalHistoryStoreTests.swift in Sources */,
+				B10000000000000000000029 /* LocalSettingsStoreTests.swift in Sources */,
+				B1000000000000000000002A /* UsageAnalyticsTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
