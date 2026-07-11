@@ -82,6 +82,8 @@ final class LocalHistoryStoreTests: XCTestCase {
         try appendRawLine("not-json", to: store.historyFileURL)
         try appendRawLine(#"{"schemaVersion":99,"recordKind":"providerFailure","timestamp":"2024-01-01T00:00:00Z","provider":"claude","error":{"code":"unknown","displayMessage":"ignored"}}"#, to: store.historyFileURL)
         try appendRawLine(#"{"schemaVersion":1,"recordKind":"providerSnapshot""#, to: store.historyFileURL)
+        try appendRawLine(#"{"schemaVersion":1,"recordKind":"providerFailure","timestamp":1e999,"provider":"claude","error":{"code":"unknown","displayMessage":"ignored"}}"#, to: store.historyFileURL)
+        try appendRawLine(#"{"schemaVersion":1,"recordKind":"providerFailure","timestamp":"NaN","provider":"claude","error":{"code":"unknown","displayMessage":"ignored"}}"#, to: store.historyFileURL)
         try await store.appendProviderSnapshot(laterProvider, capturedAt: UsageMonitorFixtures.warningSnapshot.capturedAt)
 
         let records = try await store.records(since: .distantPast)
@@ -173,32 +175,49 @@ final class LocalHistoryStoreTests: XCTestCase {
         try assertMode(0o600, at: store.historyFileURL)
     }
 
-    func testSubsecondTimestampRoundTripsAndRespectsRangeBoundaries() async throws {
+    func testExactTimestampRoundTripsAndRespectsRangeBoundaries() async throws {
         let root = try temporaryRoot()
         let store = makeStore(root: root)
-        let timestamp = UsageMonitorFixtures.baseDate.addingTimeInterval(0.5)
+        let timestamp = Date(timeIntervalSince1970: 1_735_689_600.123456)
         let persistedSnapshot = snapshot(at: timestamp, kind: .claudeSession, percent: 20)
 
         try await store.append(persistedSnapshot)
 
         let allRecords = try await store.records(since: .distantPast)
-        let includedRecords = try await store.records(since: UsageMonitorFixtures.baseDate.addingTimeInterval(0.25))
-        let excludedRecords = try await store.records(since: UsageMonitorFixtures.baseDate.addingTimeInterval(0.75))
+        let includedRecords = try await store.records(since: timestamp)
+        let excludedRecords = try await store.records(
+            since: Date(timeIntervalSince1970: timestamp.timeIntervalSince1970.nextUp)
+        )
 
         XCTAssertEqual(allRecords.count, 1)
-        XCTAssertEqual(try XCTUnwrap(allRecords.first).timestamp.timeIntervalSince1970, timestamp.timeIntervalSince1970, accuracy: 0.000_001)
+        XCTAssertEqual(try XCTUnwrap(allRecords.first).timestamp.timeIntervalSince1970, timestamp.timeIntervalSince1970)
         XCTAssertEqual(includedRecords.map(\.timestamp), [timestamp])
         XCTAssertEqual(excludedRecords, [])
+
+        let encodedData = try Data(contentsOf: store.historyFileURL)
+        let encodedLine = try XCTUnwrap(encodedData.split(separator: 0x0A).first)
+        let encodedObject = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(encodedLine)) as? [String: Any]
+        )
+        let encodedTimestamp = try XCTUnwrap(encodedObject["capturedAt"] as? NSNumber)
+        XCTAssertEqual(encodedTimestamp.doubleValue, timestamp.timeIntervalSince1970)
     }
 
     func testPruneRetainsFractionalAndExactCutoffRecords() async throws {
         let root = try temporaryRoot()
         let store = makeStore(root: root)
-        let base = UsageMonitorFixtures.baseDate
-        let cutoff = base.addingTimeInterval(0.25)
-        let oldSnapshot = snapshot(at: base, kind: .codexWeek, percent: 10)
+        let cutoff = Date(timeIntervalSince1970: 1_735_689_600.123456)
+        let oldSnapshot = snapshot(
+            at: Date(timeIntervalSince1970: cutoff.timeIntervalSince1970.nextDown),
+            kind: .codexWeek,
+            percent: 10
+        )
         let exactCutoffSnapshot = snapshot(at: cutoff, kind: .codexWeek, percent: 20)
-        let fractionalSnapshot = snapshot(at: base.addingTimeInterval(0.5), kind: .codexWeek, percent: 30)
+        let fractionalSnapshot = snapshot(
+            at: Date(timeIntervalSince1970: cutoff.timeIntervalSince1970.nextUp),
+            kind: .codexWeek,
+            percent: 30
+        )
 
         try await store.append(oldSnapshot)
         try await store.append(exactCutoffSnapshot)
@@ -210,6 +229,24 @@ final class LocalHistoryStoreTests: XCTestCase {
         XCTAssertEqual(retainedSnapshots.map(\.capturedAt), [exactCutoffSnapshot.capturedAt, fractionalSnapshot.capturedAt])
         try assertMode(0o700, at: root)
         try assertMode(0o600, at: store.historyFileURL)
+    }
+
+    func testPriorFractionalISO8601CRLFLineStillDecodes() async throws {
+        let root = try temporaryRoot()
+        let store = makeStore(root: root)
+        try LocalPersistence.ensureRoot(at: root)
+        try LocalPersistence.append(
+            Data((#"{"error":{"code":"unavailable","displayMessage":"Prior fractional failure"},"provider":"claude","recordKind":"providerFailure","schemaVersion":1,"timestamp":"2025-01-01T00:00:00.500Z"}"# + "\r\n").utf8),
+            to: store.historyFileURL
+        )
+
+        let records = try await store.records(since: .distantPast)
+
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(
+            try XCTUnwrap(records.first).timestamp,
+            UsageMonitorFixtures.baseDate.addingTimeInterval(0.5)
+        )
     }
 
     func testLegacyWholeSecondISO8601LineStillDecodes() async throws {

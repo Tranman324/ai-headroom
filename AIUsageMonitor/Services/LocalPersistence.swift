@@ -34,8 +34,8 @@ actor LocalHistoryStore: HistoryStoring {
         self.rootURL = rootProvider.storageRoot
         self.historyFileURL = rootProvider.storageRoot.appendingPathComponent(Self.historyFileName, isDirectory: false)
         self.clock = clock
-        self.encoder = JSONEncoder.usageHistoryEncoder()
-        self.decoder = JSONDecoder.usageHistoryDecoder()
+        self.encoder = JSONEncoder.localHistoryEncoder()
+        self.decoder = JSONDecoder.localHistoryDecoder()
     }
 
     func append(_ snapshot: CombinedUsageSnapshot) async throws {
@@ -155,8 +155,8 @@ actor LocalSettingsStore: SettingsStoring {
     init(rootProvider: any StorageRootProviding = HomeDirectoryStorageRootProvider()) {
         self.rootURL = rootProvider.storageRoot
         self.settingsFileURL = rootProvider.storageRoot.appendingPathComponent(Self.settingsFileName, isDirectory: false)
-        self.encoder = JSONEncoder.usageHistoryEncoder()
-        self.decoder = JSONDecoder.usageHistoryDecoder()
+        self.encoder = JSONEncoder.localSettingsEncoder()
+        self.decoder = JSONDecoder.localSettingsDecoder()
     }
 
     func loadSettings() async throws -> MonitorSettings {
@@ -334,7 +334,27 @@ enum LocalPersistence {
 }
 
 private extension JSONEncoder {
-    static func usageHistoryEncoder() -> JSONEncoder {
+    static func localHistoryEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            let epochSeconds = date.timeIntervalSince1970
+            guard epochSeconds.isFinite else {
+                throw EncodingError.invalidValue(
+                    date,
+                    EncodingError.Context(
+                        codingPath: encoder.codingPath,
+                        debugDescription: "History dates must have finite epoch seconds."
+                    )
+                )
+            }
+            var container = encoder.singleValueContainer()
+            try container.encode(epochSeconds)
+        }
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
+    }
+
+    static func localSettingsEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .custom { date, encoder in
             var container = encoder.singleValueContainer()
@@ -346,15 +366,40 @@ private extension JSONEncoder {
 }
 
 private extension JSONDecoder {
-    static func usageHistoryDecoder() -> JSONDecoder {
+    static func localHistoryDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            if let epochSeconds = try? container.decode(Double.self) {
+                guard epochSeconds.isFinite else {
+                    throw DecodingError.dataCorruptedError(
+                        in: container,
+                        debugDescription: "History date epoch seconds must be finite."
+                    )
+                }
+                return Date(timeIntervalSince1970: epochSeconds)
+            }
+
+            guard
+                let value = try? container.decode(String.self),
+                let date = PersistenceDateCoding.decodeISO8601(value)
+            else {
+                throw DecodingError.dataCorruptedError(
+                    in: container,
+                    debugDescription: "Expected finite epoch seconds or a compatible ISO-8601 date."
+                )
+            }
+            return date
+        }
+        return decoder
+    }
+
+    static func localSettingsDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             let value = try container.decode(String.self)
-            if let date = try? PersistenceDateCoding.fractionalISO8601.parse(value) {
-                return date
-            }
-            if let date = try? PersistenceDateCoding.wholeSecondISO8601.parse(value) {
+            if let date = PersistenceDateCoding.decodeISO8601(value) {
                 return date
             }
             throw DecodingError.dataCorruptedError(
@@ -374,4 +419,11 @@ private enum PersistenceDateCoding {
     static let wholeSecondISO8601 = Date.ISO8601FormatStyle(
         timeZone: TimeZone(secondsFromGMT: 0)!
     )
+
+    static func decodeISO8601(_ value: String) -> Date? {
+        if let date = try? fractionalISO8601.parse(value) {
+            return date
+        }
+        return try? wholeSecondISO8601.parse(value)
+    }
 }
