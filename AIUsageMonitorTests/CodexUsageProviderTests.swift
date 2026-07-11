@@ -10,7 +10,7 @@ final class CodexUsageProviderTests: XCTestCase {
     private let accountID = "fake-codex-account-id"
     private let checkedAt = Date(timeIntervalSince1970: 1_783_756_800)
 
-    func testAllPlansAndBothUsageWindowsMapCorrectly() async throws {
+    func testDocumentedShapeMapsAllPlansBothWindowsAndAdditiveFields() async throws {
         let plans = [
             ("plus", "Plus"),
             ("prolite", "Pro 5x"),
@@ -39,10 +39,10 @@ final class CodexUsageProviderTests: XCTestCase {
             XCTAssertEqual(snapshot.meters.map(\.provider), [.codex, .codex])
             XCTAssertEqual(snapshot.meters.map(\.kind), [.codexSession, .codexWeek])
             XCTAssertEqual(snapshot.meters.map(\.display.planName), [displayName, displayName])
-            XCTAssertEqual(snapshot.meters.map(\.utilization.value), [21, 68])
+            XCTAssertEqual(snapshot.meters.map(\.utilization.value), [21, 68.5])
             XCTAssertEqual(snapshot.meters.map(\.resetAt), [
-                date("2026-07-11T15:00:00Z"),
-                date("2026-07-18T15:00:00Z")
+                Date(timeIntervalSince1970: 1_783_782_000),
+                Date(timeIntervalSince1970: 1_784_386_800.5)
             ])
             XCTAssertEqual(requests.count, 1)
             XCTAssertEqual(requests.first?.method, "GET")
@@ -195,24 +195,34 @@ final class CodexUsageProviderTests: XCTestCase {
             code: .malformedResponse,
             disallowing: [accessToken, refreshToken]
         )
-        await assertProviderFailure(
-            fileSystem: RecordingCodexAuthFileSystem(data: authJSON()),
-            responses: [.success(ProviderHTTPResponse(statusCode: 200, data: usageJSON(missingSecondaryWindow: true)))],
-            code: .malformedResponse,
-            disallowing: [accessToken, refreshToken, String(data: usageJSON(missingSecondaryWindow: true), encoding: .utf8)!]
-        )
-        await assertProviderFailure(
-            fileSystem: RecordingCodexAuthFileSystem(data: authJSON()),
-            responses: [.success(ProviderHTTPResponse(statusCode: 200, data: usageJSON(planType: "enterprise"))) ],
-            code: .malformedResponse,
-            disallowing: [accessToken, refreshToken]
-        )
-        await assertProviderFailure(
-            fileSystem: RecordingCodexAuthFileSystem(data: authJSON()),
-            responses: [.success(ProviderHTTPResponse(statusCode: 200, data: usageJSON(primaryReset: "not-a-date"))) ],
-            code: .malformedResponse,
-            disallowing: [accessToken, refreshToken, String(data: usageJSON(primaryReset: "not-a-date"), encoding: .utf8)!]
-        )
+        let malformedUsageBodies = [
+            usageJSON(primaryWindow: nil),
+            usageJSON(secondaryWindow: nil),
+            usageJSON(primaryWindow: #"{"reset_at":1783782000,"limit_window_seconds":18000}"#),
+            usageJSON(primaryWindow: #"{"used_percent":21,"limit_window_seconds":18000}"#),
+            usageJSON(primaryWindow: #"{"used_percent":21,"reset_at":1783782000}"#),
+            usageJSON(primaryWindow: #"{"used_percent":101,"reset_at":1783782000,"limit_window_seconds":18000}"#),
+            usageJSON(primaryWindow: #"{"used_percent":21,"reset_at":-1,"limit_window_seconds":18000}"#),
+            usageJSON(primaryWindow: #"{"used_percent":21,"reset_at":1e100,"limit_window_seconds":18000}"#),
+            usageJSON(primaryWindow: #"{"used_percent":21,"reset_at":1783782000,"limit_window_seconds":0}"#),
+            usageJSON(primaryWindow: #"{"used_percent":21,"reset_at":1783782000,"limit_window_seconds":"18000"}"#),
+            usageJSON(secondaryWindow: #"{"used_percent":68.5,"reset_at":1784386800.5}"#),
+            usageJSON(planType: "enterprise"),
+            oldUsageShapeJSON()
+        ]
+
+        for responseBody in malformedUsageBodies {
+            await assertProviderFailure(
+                fileSystem: RecordingCodexAuthFileSystem(data: authJSON()),
+                responses: [.success(ProviderHTTPResponse(statusCode: 200, data: responseBody))],
+                code: .malformedResponse,
+                disallowing: [
+                    accessToken,
+                    refreshToken,
+                    String(data: responseBody, encoding: .utf8) ?? ""
+                ]
+            )
+        }
     }
 
     func testRefreshFailuresAndSecondUnauthorizedDoNotLoop() async {
@@ -465,29 +475,41 @@ final class CodexUsageProviderTests: XCTestCase {
 
     private func usageJSON(
         planType: String = "plus",
-        primaryReset: String = "2026-07-11T15:00:00Z",
-        missingSecondaryWindow: Bool = false
+        primaryWindow: String? = #"{"used_percent":21,"reset_at":1783782000,"limit_window_seconds":18000,"unknown_nested":true}"#,
+        secondaryWindow: String? = #"{"used_percent":68.5,"reset_at":1784386800.5,"limit_window_seconds":604800.5,"unknown_nested":true}"#
     ) -> Data {
-        let secondaryWindow = missingSecondaryWindow ? "" : """
-        ,
-            "secondary_window": {
-              "utilization": 68,
-              "resets_at": "2026-07-18T15:00:00Z",
-              "unknown_nested": true
-            }
-        """
+        let windows = [
+            primaryWindow.map { #""primary_window": \#($0)"# },
+            secondaryWindow.map { #""secondary_window": \#($0)"# }
+        ]
+        .compactMap { $0 }
+        .joined(separator: ",")
 
         return Data("""
         {
           "rate_limit": {
-            "primary_window": {
-              "utilization": 21,
-              "resets_at": "\(primaryReset)",
-              "unknown_nested": true
-            }\(secondaryWindow)
+            \(windows)
           },
           "plan_type": "\(planType)",
           "unknown_top": { "kept": true }
+        }
+        """.utf8)
+    }
+
+    private func oldUsageShapeJSON() -> Data {
+        Data("""
+        {
+          "rate_limit": {
+            "primary_window": {
+              "utilization": 21,
+              "resets_at": "2026-07-11T15:00:00Z"
+            },
+            "secondary_window": {
+              "utilization": 68,
+              "resets_at": "2026-07-18T15:00:00Z"
+            }
+          },
+          "plan_type": "plus"
         }
         """.utf8)
     }
@@ -499,10 +521,6 @@ final class CodexUsageProviderTests: XCTestCase {
 
     private func secretBody() -> Data {
         Data(#"{"access_token":"fake-codex-access-token","refresh_token":"fake-codex-refresh-token"}"#.utf8)
-    }
-
-    private func date(_ rawValue: String) -> Date {
-        ProviderJSON.parseISO8601(rawValue)!
     }
 
     private func alternateSupplementaryGroup() -> gid_t? {

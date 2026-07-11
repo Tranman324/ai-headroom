@@ -134,12 +134,20 @@ struct CodexUsageProvider: UsageProviderFetching {
 
     private func meter(kind: MeterKind, window: CodexUsageWindow, planName: String) throws -> UsageMeterSnapshot {
         do {
+            guard window.resetAtUnixSeconds.isFinite,
+                  window.resetAtUnixSeconds >= 0,
+                  window.resetAtUnixSeconds <= Date.distantFuture.timeIntervalSince1970,
+                  window.limitWindowSeconds.isFinite,
+                  window.limitWindowSeconds > 0 else {
+                throw ProviderClientFailure.malformedResponse(provider: provider)
+            }
+
             var display = MeterDisplayMetadata(kind: kind)
             display.planName = planName
             return UsageMeterSnapshot(
                 kind: kind,
-                utilization: try UtilizationPercentage(window.utilization),
-                resetAt: window.resetAt,
+                utilization: try UtilizationPercentage(window.usedPercent),
+                resetAt: Date(timeIntervalSince1970: window.resetAtUnixSeconds),
                 display: display
             )
         } catch {
@@ -202,12 +210,14 @@ private struct CodexRateLimit: Decodable {
 }
 
 private struct CodexUsageWindow: Decodable {
-    var utilization: Double
-    var resetAt: Date
+    var usedPercent: Double
+    var resetAtUnixSeconds: Double
+    var limitWindowSeconds: Double
 
     enum CodingKeys: String, CodingKey {
-        case utilization
-        case resetAt = "resets_at"
+        case usedPercent = "used_percent"
+        case resetAtUnixSeconds = "reset_at"
+        case limitWindowSeconds = "limit_window_seconds"
     }
 }
 
