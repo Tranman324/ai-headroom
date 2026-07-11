@@ -6,14 +6,20 @@ final class UsageMonitorStoreTests: XCTestCase {
     func testRefreshRetainsFailedProviderMetersAndUpdatesHealthyPeer() async throws {
         let initialSnapshot = UsageMonitorFixtures.criticalSnapshot
         let updatedCodex = UsageMonitorFixtures.normalSnapshot.provider(.codex)!
+        let connectivity = PassiveConnectivityMonitor(initialState: .offline)
         let dependencies = TestDependencyFactory.make(
             providers: [
                 SequencedProviderClient(provider: .claude, results: [.failure(TestProviderError.unavailable)]),
                 SequencedProviderClient(provider: .codex, results: [.success(updatedCodex)])
-            ]
+            ],
+            historyStore: InMemoryHistoryStore(initialSnapshots: [initialSnapshot]),
+            clock: ManualClock(now: UsageMonitorFixtures.baseDate.addingTimeInterval(12_345)),
+            connectivityMonitor: connectivity
         )
         let store = UsageMonitorStore(dependencies: dependencies, initialSnapshot: initialSnapshot)
 
+        await store.startMonitoring()
+        connectivity.set(.online)
         await store.refresh()
 
         let claude = try XCTUnwrap(store.snapshot.provider(.claude))
@@ -24,18 +30,24 @@ final class UsageMonitorStoreTests: XCTestCase {
         XCTAssertEqual(claude.meters, initialSnapshot.provider(.claude)?.meters)
         XCTAssertEqual(codex.health.kind, .fresh)
         XCTAssertEqual(codex.meters, updatedCodex.meters)
+        await store.stopMonitoring()
     }
 
     func testRefreshFailureWithoutPriorDataStaysProviderLocalAndEmpty() async throws {
         let updatedCodex = UsageMonitorFixtures.normalSnapshot.provider(.codex)!
+        let connectivity = PassiveConnectivityMonitor(initialState: .offline)
         let dependencies = TestDependencyFactory.make(
             providers: [
                 SequencedProviderClient(provider: .claude, results: [.failure(TestProviderError.unavailable)]),
                 SequencedProviderClient(provider: .codex, results: [.success(updatedCodex)])
-            ]
+            ],
+            clock: ManualClock(now: UsageMonitorFixtures.baseDate.addingTimeInterval(12_345)),
+            connectivityMonitor: connectivity
         )
         let store = UsageMonitorStore(dependencies: dependencies, initialSnapshot: UsageMonitorFixtures.noDataSnapshot)
 
+        await store.startMonitoring()
+        connectivity.set(.online)
         await store.refresh()
 
         let claude = try XCTUnwrap(store.snapshot.provider(.claude))
@@ -44,6 +56,7 @@ final class UsageMonitorStoreTests: XCTestCase {
         XCTAssertTrue(claude.meters.isEmpty)
         XCTAssertEqual(codex.health.kind, .fresh)
         XCTAssertEqual(codex.meters, updatedCodex.meters)
+        await store.stopMonitoring()
     }
 
     func testDependencyFetchNormalizesProviderResults() async throws {
@@ -73,9 +86,9 @@ final class UsageMonitorStoreTests: XCTestCase {
             loginRegistration: loginRegistration
         )
         let store = UsageMonitorStore(dependencies: dependencies)
-        let expiration = UsageMonitorFixtures.baseDate.addingTimeInterval(600)
+        let expiration = UsageMonitorFixtures.baseDate.addingTimeInterval(12_345 + 60 * 60)
 
-        try await store.handle(.pauseAlerts(until: expiration))
+        try await store.handle(.pauseAlertsForOneHour)
         try await store.handle(.setLaunchAtLogin(true))
 
         let savedSettings = await settingsStore.savedSettings()
@@ -92,7 +105,7 @@ final class UsageMonitorStoreTests: XCTestCase {
         let store = UsageMonitorStore(dependencies: dependencies)
 
         let task = Task { @MainActor in
-            try await store.handle(.pauseAlerts(until: UsageMonitorFixtures.baseDate))
+            try await store.handle(.pauseAlertsForOneHour)
         }
         await settingsStore.waitUntilSaveStarted()
         task.cancel()
@@ -136,15 +149,18 @@ enum TestDependencyFactory {
             FixtureProviderClient(snapshot: UsageMonitorFixtures.normalSnapshot.provider(.claude)!),
             FixtureProviderClient(snapshot: UsageMonitorFixtures.normalSnapshot.provider(.codex)!)
         ],
+        historyStore: any HistoryStoring = InMemoryHistoryStore(),
         settingsStore: any SettingsStoring = RecordingSettingsStore(),
+        clock: any ClockProviding = FixedClock(now: UsageMonitorFixtures.baseDate.addingTimeInterval(12_345)),
+        connectivityMonitor: any ConnectivityMonitoring = StaticConnectivityMonitor(state: .online),
         loginRegistration: any LoginRegistering = RecordingLoginRegistration()
     ) -> AppDependencies {
         AppDependencies(
             providers: providers,
-            historyStore: InMemoryHistoryStore(),
+            historyStore: historyStore,
             settingsStore: settingsStore,
-            clock: FixedClock(now: UsageMonitorFixtures.baseDate.addingTimeInterval(12_345)),
-            connectivityMonitor: StaticConnectivityMonitor(state: .online),
+            clock: clock,
+            connectivityMonitor: connectivityMonitor,
             lifecycleEvents: NoopLifecycleEvents(),
             loginRegistration: loginRegistration
         )
@@ -171,6 +187,10 @@ actor RecordingSettingsStore: SettingsStoring {
 
 actor RecordingLoginRegistration: LoginRegistering {
     private var values: [Bool] = []
+
+    func registrationStatus() async -> LaunchAtLoginRegistrationStatus {
+        (values.last ?? false) ? .enabled : .disabled
+    }
 
     func isLaunchAtLoginEnabled() async throws -> Bool {
         values.last ?? false

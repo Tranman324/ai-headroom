@@ -48,7 +48,20 @@ protocol AppLifecycleEventProviding: Sendable {
     func events() -> AsyncStream<AppLifecycleEvent>
 }
 
+enum LaunchAtLoginRegistrationStatus: Equatable, Sendable {
+    case enabled
+    case disabled
+    case requiresApproval
+    case unavailable
+    case failed(String)
+
+    var isRegistered: Bool {
+        self == .enabled
+    }
+}
+
 protocol LoginRegistering: Sendable {
+    func registrationStatus() async -> LaunchAtLoginRegistrationStatus
     func isLaunchAtLoginEnabled() async throws -> Bool
     func setLaunchAtLoginEnabled(_ isEnabled: Bool) async throws
 }

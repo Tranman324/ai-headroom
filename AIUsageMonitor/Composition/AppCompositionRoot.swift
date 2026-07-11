@@ -10,9 +10,9 @@ enum AppCompositionRoot {
             historyStore: LocalHistoryStore(),
             settingsStore: LocalSettingsStore(),
             clock: SystemClock(),
-            connectivityMonitor: StaticConnectivityMonitor(state: .online),
-            lifecycleEvents: NoopLifecycleEvents(),
-            loginRegistration: UnsupportedLoginRegistration()
+            connectivityMonitor: NetworkPathConnectivityMonitor(),
+            lifecycleEvents: WorkspaceLifecycleEvents(),
+            loginRegistration: ServiceManagementLoginRegistration()
         )
     }
 

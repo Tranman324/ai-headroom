@@ -44,12 +44,25 @@ enum UsageFixtureScenario: String, CaseIterable, Sendable {
 }
 
 struct FixtureLaunchConfiguration {
-    var scenario: UsageFixtureScenario?
+    enum LaunchMode: Equatable, Sendable {
+        case production
+        case fixture(UsageFixtureScenario)
+        case testHost
+    }
+
+    var launchMode: LaunchMode
     var shouldOpenFixtureWindow: Bool
     var shouldWriteScreenshot: Bool
     var shouldTerminateAfterScreenshot: Bool
     var startsWithHistoryExpanded: Bool
     var screenshotDirectory: URL?
+
+    var scenario: UsageFixtureScenario? {
+        if case let .fixture(scenario) = launchMode {
+            return scenario
+        }
+        return nil
+    }
 
     static func current(
         arguments: [String] = ProcessInfo.processInfo.arguments,
@@ -61,7 +74,7 @@ struct FixtureLaunchConfiguration {
             ?? environment["AI_USAGE_MONITOR_SCREENSHOT_DIR"]
 
         return FixtureLaunchConfiguration(
-            scenario: scenarioValue.flatMap(UsageFixtureScenario.parse),
+            launchMode: launchMode(scenarioValue: scenarioValue, environment: environment),
             shouldOpenFixtureWindow: arguments.contains("--ui-smoke-window"),
             shouldWriteScreenshot: arguments.contains("--write-fixture-screenshot") || screenshotPath != nil,
             shouldTerminateAfterScreenshot: arguments.contains("--terminate-after-screenshot"),
@@ -75,10 +88,14 @@ struct FixtureLaunchConfiguration {
     }
 
     var dependencies: AppDependencies {
-        if let scenario {
+        switch launchMode {
+        case .production:
+            return AppCompositionRoot.production()
+        case let .fixture(scenario):
             return AppCompositionRoot.fixture(snapshot: scenario.snapshot)
+        case .testHost:
+            return AppCompositionRoot.fixture(snapshot: UsageMonitorFixtures.noDataSnapshot)
         }
-        return AppCompositionRoot.production()
     }
 
     var settings: MonitorSettings {
@@ -91,6 +108,50 @@ struct FixtureLaunchConfiguration {
 
     var popoverConfiguration: UsagePopoverConfiguration {
         scenario?.popoverConfiguration ?? .production
+    }
+
+    var shouldStartMonitoring: Bool {
+        launchMode == .production
+    }
+
+    private static func launchMode(scenarioValue: String?, environment: [String: String]) -> LaunchMode {
+        if let scenario = scenarioValue.flatMap(UsageFixtureScenario.parse) {
+            return .fixture(scenario)
+        }
+        if isTestHostLaunch(environment: environment) {
+            return .testHost
+        }
+        return .production
+    }
+
+    private static func isTestHostLaunch(environment: [String: String]) -> Bool {
+        if isEnabled(environment["AI_USAGE_MONITOR_TEST_HOST"]) {
+            return true
+        }
+
+        return [
+            "XCTestConfigurationFilePath",
+            "XCTestBundlePath",
+            "XCInjectBundleInto",
+            "XCODE_TEST_PLAN_NAME"
+        ].contains { key in
+            guard let value = environment[key] else {
+                return false
+            }
+            return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private static func isEnabled(_ value: String?) -> Bool {
+        guard let value else {
+            return false
+        }
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
     }
 
     private static func value(after flag: String, in arguments: [String]) -> String? {
