@@ -5,7 +5,7 @@ enum AppCompositionRoot {
         AppDependencies(
             providers: [
                 ClaudeUsageProvider(),
-                PlaceholderProviderClient(provider: .codex)
+                CodexUsageProvider()
             ],
             historyStore: InMemoryHistoryStore(),
             settingsStore: InMemorySettingsStore(initialSettings: .defaults),

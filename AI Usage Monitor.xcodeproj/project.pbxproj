@@ -16,6 +16,8 @@
 		B10000000000000000000016 /* PlaceholderServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* PlaceholderServices.swift */; };
 		B1000000000000000000001B /* ProviderTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001B /* ProviderTransport.swift */; };
 		B1000000000000000000001C /* ClaudeUsageProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001C /* ClaudeUsageProvider.swift */; };
+		B1000000000000000000001D /* CodexAuthStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001D /* CodexAuthStore.swift */; };
+		B1000000000000000000001E /* CodexUsageProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001E /* CodexUsageProvider.swift */; };
 		B10000000000000000000017 /* AppDependencies.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* AppDependencies.swift */; };
 		B10000000000000000000018 /* AppCompositionRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* AppCompositionRoot.swift */; };
 		B10000000000000000000019 /* UsageMonitorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* UsageMonitorStore.swift */; };
@@ -28,6 +30,7 @@
 		B10000000000000000000025 /* UsageMonitorStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000025 /* UsageMonitorStoreTests.swift */; };
 		B10000000000000000000026 /* LifecycleContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000026 /* LifecycleContractTests.swift */; };
 		B10000000000000000000028 /* ClaudeUsageProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000028 /* ClaudeUsageProviderTests.swift */; };
+		B10000000000000000000029 /* CodexUsageProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000029 /* CodexUsageProviderTests.swift */; };
 		B10000000000000000000027 /* AIUsageMonitorUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000027 /* AIUsageMonitorUITests.swift */; };
 /* End PBXBuildFile section */
 
@@ -61,6 +64,8 @@
 		A10000000000000000000016 /* PlaceholderServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderServices.swift; sourceTree = "<group>"; };
 		A1000000000000000000001B /* ProviderTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderTransport.swift; sourceTree = "<group>"; };
 		A1000000000000000000001C /* ClaudeUsageProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeUsageProvider.swift; sourceTree = "<group>"; };
+		A1000000000000000000001D /* CodexAuthStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexAuthStore.swift; sourceTree = "<group>"; };
+		A1000000000000000000001E /* CodexUsageProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexUsageProvider.swift; sourceTree = "<group>"; };
 		A10000000000000000000017 /* AppDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDependencies.swift; sourceTree = "<group>"; };
 		A10000000000000000000018 /* AppCompositionRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCompositionRoot.swift; sourceTree = "<group>"; };
 		A10000000000000000000019 /* UsageMonitorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMonitorStore.swift; sourceTree = "<group>"; };
@@ -73,6 +78,7 @@
 		A10000000000000000000025 /* UsageMonitorStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMonitorStoreTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000026 /* LifecycleContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LifecycleContractTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000028 /* ClaudeUsageProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeUsageProviderTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000029 /* CodexUsageProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexUsageProviderTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000027 /* AIUsageMonitorUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIUsageMonitorUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -151,6 +157,8 @@
 				A10000000000000000000016 /* PlaceholderServices.swift */,
 				A1000000000000000000001B /* ProviderTransport.swift */,
 				A1000000000000000000001C /* ClaudeUsageProvider.swift */,
+				A1000000000000000000001D /* CodexAuthStore.swift */,
+				A1000000000000000000001E /* CodexUsageProvider.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -184,6 +192,7 @@
 				A10000000000000000000025 /* UsageMonitorStoreTests.swift */,
 				A10000000000000000000026 /* LifecycleContractTests.swift */,
 				A10000000000000000000028 /* ClaudeUsageProviderTests.swift */,
+				A10000000000000000000029 /* CodexUsageProviderTests.swift */,
 			);
 			path = AIUsageMonitorTests;
 			sourceTree = "<group>";
@@ -337,6 +346,8 @@
 				B10000000000000000000016 /* PlaceholderServices.swift in Sources */,
 				B1000000000000000000001B /* ProviderTransport.swift in Sources */,
 				B1000000000000000000001C /* ClaudeUsageProvider.swift in Sources */,
+				B1000000000000000000001D /* CodexAuthStore.swift in Sources */,
+				B1000000000000000000001E /* CodexUsageProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -352,6 +363,7 @@
 				B10000000000000000000025 /* UsageMonitorStoreTests.swift in Sources */,
 				B10000000000000000000026 /* LifecycleContractTests.swift in Sources */,
 				B10000000000000000000028 /* ClaudeUsageProviderTests.swift in Sources */,
+				B10000000000000000000029 /* CodexUsageProviderTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

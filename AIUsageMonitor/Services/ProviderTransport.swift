@@ -49,24 +49,30 @@ struct URLSessionProviderHTTPTransport: ProviderHTTPTransporting {
 enum ProviderClientFailure: Error, Equatable, LocalizedError, Sendable {
     case credentialUnavailable(provider: ProviderID)
     case credentialUnreadable(provider: ProviderID)
+    case credentialInsecure(provider: ProviderID)
     case malformedCredential(provider: ProviderID)
     case missingCredentialValue(provider: ProviderID)
+    case credentialPersistence(provider: ProviderID)
     case transport(provider: ProviderID)
     case unauthorized(provider: ProviderID)
     case rateLimited(provider: ProviderID)
     case httpStatus(provider: ProviderID, statusCode: Int)
+    case refreshFailed(provider: ProviderID)
     case malformedResponse(provider: ProviderID)
 
     var provider: ProviderID {
         switch self {
         case let .credentialUnavailable(provider),
              let .credentialUnreadable(provider),
+             let .credentialInsecure(provider),
              let .malformedCredential(provider),
              let .missingCredentialValue(provider),
+             let .credentialPersistence(provider),
              let .transport(provider),
              let .unauthorized(provider),
              let .rateLimited(provider),
              let .httpStatus(provider, _),
+             let .refreshFailed(provider),
              let .malformedResponse(provider):
             return provider
         }
@@ -74,7 +80,7 @@ enum ProviderClientFailure: Error, Equatable, LocalizedError, Sendable {
 
     var code: ProviderErrorCode {
         switch self {
-        case .credentialUnavailable, .credentialUnreadable, .transport, .httpStatus:
+        case .credentialUnavailable, .credentialUnreadable, .credentialInsecure, .credentialPersistence, .transport, .httpStatus, .refreshFailed:
             return .unavailable
         case .malformedCredential, .missingCredentialValue, .malformedResponse:
             return .malformedResponse
@@ -91,10 +97,14 @@ enum ProviderClientFailure: Error, Equatable, LocalizedError, Sendable {
             return "\(provider.displayName) credentials are unavailable."
         case let .credentialUnreadable(provider):
             return "\(provider.displayName) credentials could not be read."
+        case let .credentialInsecure(provider):
+            return "\(provider.displayName) credentials are not stored with restrictive permissions."
         case let .malformedCredential(provider):
             return "\(provider.displayName) credentials are malformed."
         case let .missingCredentialValue(provider):
             return "\(provider.displayName) credentials are missing required values."
+        case let .credentialPersistence(provider):
+            return "\(provider.displayName) credentials could not be updated."
         case let .transport(provider):
             return "\(provider.displayName) usage service could not be reached."
         case let .unauthorized(provider):
@@ -103,6 +113,8 @@ enum ProviderClientFailure: Error, Equatable, LocalizedError, Sendable {
             return "\(provider.displayName) usage service is rate limited."
         case let .httpStatus(provider, statusCode):
             return "\(provider.displayName) usage service returned HTTP \(statusCode)."
+        case let .refreshFailed(provider):
+            return "\(provider.displayName) credentials could not be refreshed."
         case let .malformedResponse(provider):
             return "\(provider.displayName) usage data was malformed."
         }
