@@ -263,6 +263,137 @@ final class UsagePollingCoordinatorTests: XCTestCase {
         XCTAssertEqual(fetchCount, 0)
     }
 
+    func testStopDuringBlockedSettingsStartupDoesNotInstallOwnedWork() async throws {
+        let loadedSettings = MonitorSettings(
+            alertThreshold: try AlertThreshold(percentage: 50),
+            launchAtLogin: true
+        )
+        let settingsStore = BlockingFirstSettingsStore(loadResults: [loadedSettings])
+        let history = RecordingHistoryStore()
+        let clock = ManualClock(now: UsageMonitorFixtures.baseDate.addingTimeInterval(600))
+        let connectivity = ManualConnectivityMonitor(initialState: .online)
+        let lifecycle = ManualLifecycleEvents()
+        let provider = RecordingProviderClient(
+            provider: .claude,
+            results: [.success(try XCTUnwrap(UsageMonitorFixtures.normalSnapshot.provider(.claude)))]
+        )
+        let store = makeStore(
+            providers: [provider],
+            historyStore: history,
+            settingsStore: settingsStore,
+            clock: clock,
+            connectivityMonitor: connectivity,
+            lifecycleEvents: lifecycle
+        )
+        let stoppedSnapshot = store.snapshot
+        let stoppedSettings = store.settings
+
+        let startup = Task { @MainActor in
+            await store.startMonitoring()
+        }
+        await settingsStore.waitForLoadCount(1)
+        await store.stopMonitoring()
+        await settingsStore.releaseFirstLoad()
+        await startup.value
+
+        connectivity.set(.offline)
+        connectivity.set(.online)
+        lifecycle.send(.workspaceDidWake)
+        clock.resumeSleepers()
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+
+        let fetchCount = await provider.fetchCount()
+        let pruneCount = await history.pruneCount()
+        let records = await history.appendedRecords()
+        let saveCount = await settingsStore.saveCount()
+        XCTAssertEqual(connectivity.activeObserverCount(), 0)
+        XCTAssertEqual(lifecycle.activeObserverCount(), 0)
+        XCTAssertEqual(clock.activeSleepCount(), 0)
+        XCTAssertEqual(fetchCount, 0)
+        XCTAssertEqual(pruneCount, 0)
+        XCTAssertEqual(records.count, 0)
+        XCTAssertEqual(saveCount, 0)
+        XCTAssertEqual(store.snapshot, stoppedSnapshot)
+        XCTAssertEqual(store.settings, stoppedSettings)
+        XCTAssertEqual(store.launchAtLoginStatus, .disabled)
+    }
+
+    func testRestartAfterCancelledStartupOwnsObserversAndPollExactlyOnce() async throws {
+        let staleSettings = MonitorSettings(
+            alertThreshold: try AlertThreshold(percentage: 50),
+            launchAtLogin: true
+        )
+        let currentSettings = MonitorSettings(
+            pollingInterval: try PollingInterval(minutes: 1),
+            alertThreshold: try AlertThreshold(percentage: 95)
+        )
+        let settingsStore = BlockingFirstSettingsStore(loadResults: [staleSettings, currentSettings])
+        let history = RecordingHistoryStore()
+        let clock = ManualClock(now: UsageMonitorFixtures.baseDate.addingTimeInterval(600))
+        let connectivity = ManualConnectivityMonitor(initialState: .online)
+        let lifecycle = ManualLifecycleEvents()
+        let restartedSnapshot = try XCTUnwrap(UsageMonitorFixtures.warningSnapshot.provider(.claude))
+        let provider = RecordingProviderClient(
+            provider: .claude,
+            results: [.success(restartedSnapshot)]
+        )
+        let store = makeStore(
+            providers: [provider],
+            historyStore: history,
+            settingsStore: settingsStore,
+            clock: clock,
+            connectivityMonitor: connectivity,
+            lifecycleEvents: lifecycle
+        )
+
+        let staleStartup = Task { @MainActor in
+            await store.startMonitoring()
+        }
+        await settingsStore.waitForLoadCount(1)
+        await store.stopMonitoring()
+
+        let currentStartup = Task { @MainActor in
+            await store.startMonitoring()
+        }
+        await settingsStore.waitForLoadCount(2)
+        await currentStartup.value
+        await waitUntil {
+            connectivity.activeObserverCount() == 1
+                && lifecycle.activeObserverCount() == 1
+                && clock.activeSleepCount() == 1
+        }
+
+        await settingsStore.releaseFirstLoad()
+        await staleStartup.value
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+
+        let fetchCount = await provider.fetchCount()
+        let pruneCount = await history.pruneCount()
+        let records = await history.appendedRecords()
+        XCTAssertEqual(connectivity.activeObserverCount(), 1)
+        XCTAssertEqual(lifecycle.activeObserverCount(), 1)
+        XCTAssertEqual(clock.activeSleepCount(), 1)
+        XCTAssertEqual(fetchCount, 1)
+        XCTAssertEqual(pruneCount, 1)
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(store.settings, currentSettings)
+        XCTAssertEqual(store.snapshot.provider(.claude)?.meters, restartedSnapshot.meters)
+
+        await store.stopMonitoring()
+        await waitUntil {
+            connectivity.activeObserverCount() == 0
+                && lifecycle.activeObserverCount() == 0
+                && clock.activeSleepCount() == 0
+        }
+        XCTAssertEqual(connectivity.activeObserverCount(), 0)
+        XCTAssertEqual(lifecycle.activeObserverCount(), 0)
+        XCTAssertEqual(clock.activeSleepCount(), 0)
+    }
+
     func testCancellingActivePollDropsLateProviderResultAndHistoryWrite() async throws {
         let history = RecordingHistoryStore()
         let provider = BlockingProviderClient(
@@ -563,6 +694,61 @@ actor RecordingHistoryStore: HistoryStoring {
     }
 }
 
+actor BlockingFirstSettingsStore: SettingsStoring {
+    private let loadResults: [MonitorSettings]
+    private var loads = 0
+    private var saves = 0
+    private var firstLoadRelease: CheckedContinuation<Void, Never>?
+    private var loadWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+
+    init(loadResults: [MonitorSettings]) {
+        precondition(!loadResults.isEmpty)
+        self.loadResults = loadResults
+    }
+
+    func loadSettings() async throws -> MonitorSettings {
+        loads += 1
+        let loadNumber = loads
+        resumeLoadWaiters()
+        if loadNumber == 1 {
+            await withCheckedContinuation { continuation in
+                firstLoadRelease = continuation
+            }
+        }
+        return loadResults[min(loadNumber - 1, loadResults.count - 1)]
+    }
+
+    func saveSettings(_ settings: MonitorSettings) async throws {
+        saves += 1
+    }
+
+    func waitForLoadCount(_ expectedCount: Int) async {
+        if loads >= expectedCount {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            loadWaiters.append((expectedCount, continuation))
+        }
+    }
+
+    func releaseFirstLoad() {
+        firstLoadRelease?.resume()
+        firstLoadRelease = nil
+    }
+
+    func saveCount() -> Int {
+        saves
+    }
+
+    private func resumeLoadWaiters() {
+        let ready = loadWaiters.filter { loads >= $0.0 }
+        loadWaiters.removeAll { loads >= $0.0 }
+        for waiter in ready {
+            waiter.1.resume()
+        }
+    }
+}
+
 enum RecordingHistoryError: Error {
     case writeFailed
 }
@@ -731,6 +917,12 @@ final class ManualClock: ClockProviding, @unchecked Sendable {
         }
     }
 
+    func activeSleepCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return continuations.count
+    }
+
     private func currentNow() -> Date {
         lock.lock()
         defer { lock.unlock() }
@@ -784,6 +976,12 @@ final class ManualConnectivityMonitor: ConnectivityMonitoring, @unchecked Sendab
         for continuation in activeContinuations {
             continuation.yield(newState)
         }
+    }
+
+    func activeObserverCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return continuations.count
     }
 
     private func currentStateValue() -> ConnectivityState {
@@ -871,6 +1069,12 @@ final class ManualLifecycleEvents: AppLifecycleEventProviding, @unchecked Sendab
         for continuation in activeContinuations {
             continuation.yield(event)
         }
+    }
+
+    func activeObserverCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return continuations.count
     }
 
     private func addContinuation(_ continuation: AsyncStream<AppLifecycleEvent>.Continuation, id: UUID) {

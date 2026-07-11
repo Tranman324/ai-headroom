@@ -23,6 +23,7 @@ actor UsagePollingCoordinator {
     private var settings: MonitorSettings
     private var currentSnapshot: CombinedUsageSnapshot
     private var started = false
+    private var startupGeneration: UInt = 0
     private var isAsleep = false
     private var lastConnectivityState: ConnectivityState = .offline
 
@@ -56,13 +57,48 @@ actor UsagePollingCoordinator {
         }
 
         started = true
-        settings = (try? await dependencies.settingsStore.loadSettings()) ?? .defaults
-        await publishSettings(settings)
-        await publishLaunchStatus(dependencies.loginRegistration.registrationStatus())
-        await pruneHistory()
-        await recoverSnapshotFromHistory()
+        startupGeneration &+= 1
+        let generation = startupGeneration
 
-        lastConnectivityState = await dependencies.connectivityMonitor.currentState
+        let loadedSettings = (try? await dependencies.settingsStore.loadSettings()) ?? .defaults
+        guard ownsStartup(generation) else {
+            return
+        }
+        settings = loadedSettings
+        await publishSettings(settings)
+        guard ownsStartup(generation) else {
+            return
+        }
+
+        let launchStatus = await dependencies.loginRegistration.registrationStatus()
+        guard ownsStartup(generation) else {
+            return
+        }
+        await publishLaunchStatus(launchStatus)
+        guard ownsStartup(generation) else {
+            return
+        }
+
+        await pruneHistory()
+        guard ownsStartup(generation) else {
+            return
+        }
+
+        let recoveredSnapshot = await snapshotRecoveredFromHistory()
+        guard ownsStartup(generation) else {
+            return
+        }
+        currentSnapshot = recoveredSnapshot
+        await publishSnapshot(recoveredSnapshot)
+        guard ownsStartup(generation) else {
+            return
+        }
+
+        let connectivityState = await dependencies.connectivityMonitor.currentState
+        guard ownsStartup(generation) else {
+            return
+        }
+        lastConnectivityState = connectivityState
         startConnectivityObservation()
         startLifecycleObservation()
         restartIntervalLoop()
@@ -74,6 +110,7 @@ actor UsagePollingCoordinator {
 
     func cancel() {
         started = false
+        startupGeneration &+= 1
         intervalTask?.cancel()
         connectivityTask?.cancel()
         lifecycleTask?.cancel()
@@ -120,7 +157,7 @@ actor UsagePollingCoordinator {
         try? await dependencies.historyStore.prune(olderThan: cutoff)
     }
 
-    private func recoverSnapshotFromHistory() async {
+    private func snapshotRecoveredFromHistory() async -> CombinedUsageSnapshot {
         let recovered = (try? await dependencies.historyStore.latestUsableProviderSnapshots()) ?? [:]
         let capturedAt = dependencies.clock.now
         let providers = ProviderID.allCases.map { provider in
@@ -138,8 +175,11 @@ actor UsagePollingCoordinator {
                 )
             )
         }
-        currentSnapshot = CombinedUsageSnapshot(capturedAt: capturedAt, providers: providers)
-        await publishSnapshot(currentSnapshot)
+        return CombinedUsageSnapshot(capturedAt: capturedAt, providers: providers)
+    }
+
+    private func ownsStartup(_ generation: UInt) -> Bool {
+        started && startupGeneration == generation
     }
 
     private func startConnectivityObservation() {
