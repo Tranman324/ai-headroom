@@ -26,13 +26,23 @@ struct SanitizedProviderError: Codable, Equatable, Sendable {
 
     static func redacted(_ message: String) -> String {
         var sanitized = message
-        let patterns = [
-            #"(?i)bearer\s+[A-Za-z0-9._\-]+"#,
-            #"(?i)(access[_-]?token|refresh[_-]?token|api[_-]?key)\s*[:=]\s*[^,\s]+"#,
-            #"sk-[A-Za-z0-9]{8,}"#
+        let replacements = [
+            (
+                pattern: #"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+"#,
+                template: "Bearer [redacted]"
+            ),
+            (
+                pattern: #"(?i)(["']?(?:access[_-]?token|refresh[_-]?token|api[_-]?key)["']?\s*[:=]\s*["']?)[^"',\s}]+(["']?)"#,
+                template: "$1[redacted]$2"
+            ),
+            (
+                pattern: #"sk-[A-Za-z0-9]{8,}"#,
+                template: "[redacted]"
+            )
         ]
 
-        for pattern in patterns {
+        for replacement in replacements {
+            let pattern = replacement.pattern
             guard let regex = try? NSRegularExpression(pattern: pattern) else {
                 continue
             }
@@ -41,7 +51,7 @@ struct SanitizedProviderError: Codable, Equatable, Sendable {
                 in: sanitized,
                 options: [],
                 range: range,
-                withTemplate: "[redacted]"
+                withTemplate: replacement.template
             )
         }
 

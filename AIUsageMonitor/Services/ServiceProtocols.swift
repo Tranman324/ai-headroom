@@ -36,6 +36,8 @@ enum AppLifecycleEvent: String, Codable, Equatable, Sendable {
     case willTerminate
     case didBecomeActive
     case didResignActive
+    case workspaceWillSleep
+    case workspaceDidWake
 }
 
 protocol AppLifecycleEventProviding: Sendable {

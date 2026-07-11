@@ -40,6 +40,16 @@
                ReferencedContainer = "container:AI Usage Monitor.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "C10000000000000000000005"
+               BuildableName = "AI Usage MonitorUITests.xctest"
+               BlueprintName = "AI Usage MonitorUITests"
+               ReferencedContainer = "container:AI Usage Monitor.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction

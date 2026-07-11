@@ -23,21 +23,17 @@ final class UsageMonitorStore: ObservableObject {
     }
 
     func refresh() async {
-        snapshot = await dependencies.fetchAllProviderSnapshots()
+        snapshot = await dependencies.fetchAllProviderSnapshots(previousSnapshot: snapshot)
     }
 
-    func loadSettings() async {
-        do {
-            settings = try await dependencies.settingsStore.loadSettings()
-        } catch {
-            settings = .defaults
-        }
+    func loadSettings() async throws {
+        settings = try await dependencies.settingsStore.loadSettings()
     }
 
-    func handle(_ command: AppIntentCommand) {
+    func handle(_ command: AppIntentCommand) async throws {
         switch command {
         case .refresh:
-            Task { await refresh() }
+            await refresh()
         case .openSettings:
             navigation.isSettingsPresented = true
         case .closeSettings:
@@ -50,15 +46,11 @@ final class UsageMonitorStore: ObservableObject {
             navigation.isHistoryExpanded = isExpanded
         case let .pauseAlerts(expiration):
             settings.alertPauseExpiration = expiration
-            Task {
-                try? await dependencies.settingsStore.saveSettings(settings)
-            }
+            try await dependencies.settingsStore.saveSettings(settings)
         case let .setLaunchAtLogin(isEnabled):
             settings.launchAtLogin = isEnabled
-            Task {
-                try? await dependencies.loginRegistration.setLaunchAtLoginEnabled(isEnabled)
-                try? await dependencies.settingsStore.saveSettings(settings)
-            }
+            try await dependencies.loginRegistration.setLaunchAtLoginEnabled(isEnabled)
+            try await dependencies.settingsStore.saveSettings(settings)
         case .quit:
             NSApplication.shared.terminate(nil)
         }

@@ -36,7 +36,8 @@ struct AppDependencies: Sendable {
         providersByID[provider]
     }
 
-    func fetchAllProviderSnapshots() async -> CombinedUsageSnapshot {
+    func fetchAllProviderSnapshots(previousSnapshot: CombinedUsageSnapshot? = nil) async -> CombinedUsageSnapshot {
+        let checkedAt = clock.now
         let snapshots = await withTaskGroup(of: ProviderUsageSnapshot.self) { group in
             for provider in ProviderID.allCases {
                 guard let client = providersByID[provider] else {
@@ -44,16 +45,18 @@ struct AppDependencies: Sendable {
                 }
                 group.addTask {
                     do {
-                        return try await client.fetchUsageSnapshot()
-                    } catch {
-                        let sanitizedError = SanitizedProviderError(
-                            code: .unknown,
-                            displayMessage: "Unable to load \(provider.displayName) usage."
-                        )
+                        let snapshot = try await client.fetchUsageSnapshot()
                         return ProviderUsageSnapshot(
                             provider: provider,
-                            meters: [],
-                            health: .errored(checkedAt: clock.now, error: sanitizedError)
+                            meters: snapshot.meters,
+                            health: snapshot.health
+                        )
+                    } catch {
+                        return failedProviderSnapshot(
+                            provider: provider,
+                            error: error,
+                            previousSnapshot: previousSnapshot,
+                            checkedAt: checkedAt
                         )
                     }
                 }
@@ -67,5 +70,37 @@ struct AppDependencies: Sendable {
         }
 
         return CombinedUsageSnapshot(capturedAt: clock.now, providers: snapshots)
+    }
+
+    private func failedProviderSnapshot(
+        provider: ProviderID,
+        error: any Error,
+        previousSnapshot: CombinedUsageSnapshot?,
+        checkedAt: Date
+    ) -> ProviderUsageSnapshot {
+        let sanitizedError = SanitizedProviderError(
+            code: .unknown,
+            displayMessage: "Unable to load \(provider.displayName) usage: \(error.localizedDescription)"
+        )
+        let previousProvider = previousSnapshot?.provider(provider)
+        let previousMeters = previousProvider?.meters ?? []
+
+        guard !previousMeters.isEmpty else {
+            return ProviderUsageSnapshot(
+                provider: provider,
+                meters: [],
+                health: .errored(checkedAt: checkedAt, error: sanitizedError)
+            )
+        }
+
+        return ProviderUsageSnapshot(
+            provider: provider,
+            meters: previousMeters,
+            health: .stale(
+                checkedAt: checkedAt,
+                staleSince: previousProvider?.health.checkedAt ?? previousSnapshot?.capturedAt ?? checkedAt,
+                error: sanitizedError
+            )
+        )
     }
 }

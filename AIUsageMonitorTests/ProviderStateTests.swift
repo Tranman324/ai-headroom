@@ -27,6 +27,22 @@ final class ProviderStateTests: XCTestCase {
         XCTAssertTrue(error.displayMessage.contains("[redacted]"))
     }
 
+    func testSanitizedProviderErrorRedactsJSONAndCamelCaseCredentialFragments() {
+        let error = SanitizedProviderError(
+            code: .unauthorized,
+            displayMessage: """
+            Claude usage failed with {"accessToken":"fake-access-token-value","refresh_token":"fake-refresh-token-value","api-key":"fake-api-key-value","Authorization":"Bearer fake-bearer-value"} while keeping provider context.
+            """
+        )
+
+        XCTAssertFalse(error.displayMessage.contains("fake-access-token-value"))
+        XCTAssertFalse(error.displayMessage.contains("fake-refresh-token-value"))
+        XCTAssertFalse(error.displayMessage.contains("fake-api-key-value"))
+        XCTAssertFalse(error.displayMessage.contains("fake-bearer-value"))
+        XCTAssertTrue(error.displayMessage.contains("Claude usage failed"))
+        XCTAssertTrue(error.displayMessage.contains("provider context"))
+    }
+
     func testProviderSnapshotDropsMismatchedMeters() {
         let snapshot = ProviderUsageSnapshot(
             provider: .codex,

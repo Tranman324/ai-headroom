@@ -7,14 +7,14 @@ struct AIUsageMonitorApp: App {
     var body: some Scene {
         MenuBarExtra("AI Usage Monitor", systemImage: "chart.line.uptrend.xyaxis") {
             Button {
-                store.handle(.refresh)
+                run(.refresh)
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
             .keyboardShortcut("r")
 
             Button {
-                store.handle(.openSettings)
+                run(.openSettings)
             } label: {
                 Label("Settings", systemImage: "gearshape")
             }
@@ -23,7 +23,7 @@ struct AIUsageMonitorApp: App {
             Divider()
 
             Button {
-                store.handle(.quit)
+                run(.quit)
             } label: {
                 Label("Quit", systemImage: "power")
             }
@@ -42,6 +42,12 @@ struct AIUsageMonitorApp: App {
             }
             .padding()
             .frame(width: 360)
+        }
+    }
+
+    private func run(_ command: AppIntentCommand) {
+        Task { @MainActor in
+            try await store.handle(command)
         }
     }
 }

@@ -23,10 +23,20 @@
 		B10000000000000000000022 /* SettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000022 /* SettingsTests.swift */; };
 		B10000000000000000000023 /* ProviderStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000023 /* ProviderStateTests.swift */; };
 		B10000000000000000000024 /* CompositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000024 /* CompositionTests.swift */; };
+		B10000000000000000000025 /* UsageMonitorStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000025 /* UsageMonitorStoreTests.swift */; };
+		B10000000000000000000026 /* LifecycleContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000026 /* LifecycleContractTests.swift */; };
+		B10000000000000000000027 /* AIUsageMonitorUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000027 /* AIUsageMonitorUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 		C10000000000000000000003 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000000000000000000000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C10000000000000000000001;
+			remoteInfo = "AI Usage Monitor";
+		};
+		C10000000000000000000007 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = A10000000000000000000000 /* Project object */;
 			proxyType = 1;
@@ -38,6 +48,7 @@
 /* Begin PBXFileReference section */
 		A10000000000000000000009 /* AI Usage Monitor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "AI Usage Monitor.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000000000000000000000A /* AI Usage MonitorTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "AI Usage MonitorTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1000000000000000000000B /* AI Usage MonitorUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "AI Usage MonitorUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000010 /* AIUsageMonitorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIUsageMonitorApp.swift; sourceTree = "<group>"; };
 		A10000000000000000000011 /* UsageDomain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageDomain.swift; sourceTree = "<group>"; };
 		A10000000000000000000012 /* ProviderState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderState.swift; sourceTree = "<group>"; };
@@ -54,6 +65,9 @@
 		A10000000000000000000022 /* SettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000023 /* ProviderStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderStateTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000024 /* CompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000025 /* UsageMonitorStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMonitorStoreTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000026 /* LifecycleContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LifecycleContractTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000027 /* AIUsageMonitorUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIUsageMonitorUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -71,6 +85,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D10000000000000000000008 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -79,6 +100,7 @@
 			children = (
 				A10000000000000000000003 /* AIUsageMonitor */,
 				A10000000000000000000008 /* AIUsageMonitorTests */,
+				A1000000000000000000000C /* AIUsageMonitorUITests */,
 				A10000000000000000000002 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -88,6 +110,7 @@
 			children = (
 				A10000000000000000000009 /* AI Usage Monitor.app */,
 				A1000000000000000000000A /* AI Usage MonitorTests.xctest */,
+				A1000000000000000000000B /* AI Usage MonitorUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -150,8 +173,18 @@
 				A10000000000000000000022 /* SettingsTests.swift */,
 				A10000000000000000000023 /* ProviderStateTests.swift */,
 				A10000000000000000000024 /* CompositionTests.swift */,
+				A10000000000000000000025 /* UsageMonitorStoreTests.swift */,
+				A10000000000000000000026 /* LifecycleContractTests.swift */,
 			);
 			path = AIUsageMonitorTests;
+			sourceTree = "<group>";
+		};
+		A1000000000000000000000C /* AIUsageMonitorUITests */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000027 /* AIUsageMonitorUITests.swift */,
+			);
+			path = AIUsageMonitorUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -192,6 +225,24 @@
 			productReference = A1000000000000000000000A /* AI Usage MonitorTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		C10000000000000000000005 /* AI Usage MonitorUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E10000000000000000000004 /* Build configuration list for PBXNativeTarget "AI Usage MonitorUITests" */;
+			buildPhases = (
+				D10000000000000000000007 /* Sources */,
+				D10000000000000000000008 /* Frameworks */,
+				D10000000000000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C10000000000000000000006 /* PBXTargetDependency */,
+			);
+			name = "AI Usage MonitorUITests";
+			productName = "AI Usage MonitorUITests";
+			productReference = A1000000000000000000000B /* AI Usage MonitorUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -206,6 +257,10 @@
 						CreatedOnToolsVersion = 26.6;
 					};
 					C10000000000000000000002 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = C10000000000000000000001;
+					};
+					C10000000000000000000005 = {
 						CreatedOnToolsVersion = 26.6;
 						TestTargetID = C10000000000000000000001;
 					};
@@ -226,6 +281,7 @@
 			targets = (
 				C10000000000000000000001 /* AI Usage Monitor */,
 				C10000000000000000000002 /* AI Usage MonitorTests */,
+				C10000000000000000000005 /* AI Usage MonitorUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -239,6 +295,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		D10000000000000000000006 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D10000000000000000000009 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -275,6 +338,16 @@
 				B10000000000000000000022 /* SettingsTests.swift in Sources */,
 				B10000000000000000000023 /* ProviderStateTests.swift in Sources */,
 				B10000000000000000000024 /* CompositionTests.swift in Sources */,
+				B10000000000000000000025 /* UsageMonitorStoreTests.swift in Sources */,
+				B10000000000000000000026 /* LifecycleContractTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D10000000000000000000007 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B10000000000000000000027 /* AIUsageMonitorUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -285,6 +358,11 @@
 			isa = PBXTargetDependency;
 			target = C10000000000000000000001 /* AI Usage Monitor */;
 			targetProxy = C10000000000000000000003 /* PBXContainerItemProxy */;
+		};
+		C10000000000000000000006 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C10000000000000000000001 /* AI Usage Monitor */;
+			targetProxy = C10000000000000000000007 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -488,6 +566,46 @@
 			};
 			name = Release;
 		};
+		F10000000000000000000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jeremytran.aiusagemonitor.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = "AI Usage Monitor";
+			};
+			name = Debug;
+		};
+		F10000000000000000000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jeremytran.aiusagemonitor.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = "AI Usage Monitor";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -514,6 +632,15 @@
 			buildConfigurations = (
 				F10000000000000000000005 /* Debug */,
 				F10000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E10000000000000000000004 /* Build configuration list for PBXNativeTarget "AI Usage MonitorUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F10000000000000000000007 /* Debug */,
+				F10000000000000000000008 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
