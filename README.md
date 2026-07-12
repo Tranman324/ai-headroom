@@ -8,8 +8,10 @@ account, no data leaves your machine.
 
 It surfaces up to **7 meters**:
 
-- **Claude Max (5):** Session (rolling 5h), Week (all models), and per-model
-  weekly meters (Fable, Sonnet, Haiku).
+- **Claude Max (up to 5):** Session (rolling 5h), Week (all models), and
+  per-model weekly meters (Fable, Sonnet, Haiku). The per-model rows appear only
+  for the models your account currently has an active weekly limit for, so you
+  may see fewer than five.
 - **OpenAI Codex (2):** Session (rolling 5h) and Weekly, tagged with your plan
   (Plus / Pro 5x / Pro 20x / Business).
 
@@ -125,12 +127,15 @@ registration state is shown live in Settings and reflects the real
   and records a sanitized error row in the history. The healthy provider is
   unaffected.
 - **Claude shows an error even though your token is valid.** The app maps the
-  Anthropic usage response into the 5 documented meters and treats an
-  unexpected response shape as a provider error ("Claude usage data was
-  malformed."). This can happen if the usage API's response shape or the set of
-  per-model weekly limits it returns differs from what the app expects. Codex is
-  unaffected. If this persists, the response contract has drifted and the Claude
-  mapping needs updating.
+  Anthropic usage response into up to 5 meters: Session, Week (all models), and a
+  per-model weekly row for each model your account has an active limit for.
+  Differing sets of per-model weekly limits are tolerated — unrecognized models
+  are skipped and absent known models are simply omitted, so the meter count can
+  vary without failing the poll. Only a genuinely malformed response — a missing
+  `five_hour` or `seven_day` window, a malformed timestamp, or an out-of-range
+  utilization value — is treated as a provider error ("Claude usage data was
+  malformed."). Codex is unaffected. If this persists, the response contract has
+  drifted and the Claude mapping needs updating.
 - **Reset the history.** Quit the app and delete
   `~/.ai-usage/usage-history.jsonl` (and `settings.json` to reset settings). The
   directory and files are recreated on next launch.

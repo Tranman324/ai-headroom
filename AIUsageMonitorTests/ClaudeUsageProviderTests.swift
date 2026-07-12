@@ -225,6 +225,35 @@ final class ClaudeUsageProviderTests: XCTestCase {
         ])
     }
 
+    func testModelLimitMissingPercentAndUtilizationFailsWithoutResponseBodyLeakage() async {
+        // A model-scoped weekly limit that omits both `percent` and
+        // `utilization` must throw the sanitized malformedResponse failure
+        // rather than silently defaulting the usage to 0. Pins the decoder
+        // contract in ClaudeUsageProvider's ClaudeUsageLimit initializer.
+        let responseBody = Data("""
+        {
+          "five_hour": { "utilization": 11, "resets_at": "2026-07-11T15:00:00Z" },
+          "seven_day": { "utilization": 22, "resets_at": "2026-07-18T15:00:00Z" },
+          "limits": [
+            { "resets_at": "2026-07-18T16:00:00Z", "scope": { "model": { "display_name": "Fable" } } }
+          ],
+          "access_token": "fake-claude-access-token"
+        }
+        """.utf8)
+        let provider = ClaudeUsageProvider(
+            credentialReader: FakeClaudeCredentialReader(data: credentialJSON(token: token)),
+            transport: FakeProviderHTTPTransport(responses: [
+                .success(ProviderHTTPResponse(statusCode: 200, data: responseBody))
+            ]),
+            clock: FixedClock(now: checkedAt)
+        )
+
+        await assertProviderFailure(from: provider, code: .malformedResponse, disallowing: [
+            token,
+            String(data: responseBody, encoding: .utf8)!
+        ])
+    }
+
     func testCredentialFailuresAreSanitized() async {
         let malformedCredential = Data(#"{"claudeAiOauth":{"accessToken":"fake-claude-access-token"}}"#.utf8.dropLast())
         let provider = ClaudeUsageProvider(
