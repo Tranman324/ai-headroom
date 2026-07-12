@@ -56,6 +56,51 @@ final class CodexUsageProviderTests: XCTestCase {
         }
     }
 
+    func testLiveShapeWithNullSecondaryWindowYieldsSessionMeterOnly() async throws {
+        // Sanitized capture of the real live /wham/usage body: integer
+        // percentages/timestamps, `secondary_window: null`, plan_type "prolite",
+        // and additive live-only fields (allowed, limit_reached, credits,
+        // additional_rate_limits). This body threw `malformedResponse` before
+        // secondary_window was made optional.
+        let fileSystem = RecordingCodexAuthFileSystem(data: authJSON())
+        let transport = RecordingProviderHTTPTransport(responses: [
+            .success(ProviderHTTPResponse(statusCode: 200, data: liveUsageJSON()))
+        ])
+        let provider = CodexUsageProvider(
+            authStore: CodexAuthFileStore(homeDirectory: homeDirectory, fileSystem: fileSystem),
+            transport: transport,
+            clock: FixedClock(now: checkedAt)
+        )
+
+        let snapshot = try await provider.fetchUsageSnapshot()
+
+        XCTAssertEqual(snapshot.provider, .codex)
+        XCTAssertEqual(snapshot.health.kind, .fresh)
+        XCTAssertEqual(snapshot.meters.map(\.kind), [.codexSession])
+        XCTAssertEqual(snapshot.meters.map(\.display.planName), ["Pro 5x"])
+        XCTAssertEqual(snapshot.meters.map(\.utilization.value), [38])
+        XCTAssertEqual(snapshot.meters.map(\.resetAt), [Date(timeIntervalSince1970: 1_784_354_510)])
+    }
+
+    func testAbsentSecondaryWindowYieldsSessionMeterOnly() async throws {
+        let fileSystem = RecordingCodexAuthFileSystem(data: authJSON())
+        let transport = RecordingProviderHTTPTransport(responses: [
+            .success(ProviderHTTPResponse(statusCode: 200, data: usageJSON(planType: "pro", secondaryWindow: nil)))
+        ])
+        let provider = CodexUsageProvider(
+            authStore: CodexAuthFileStore(homeDirectory: homeDirectory, fileSystem: fileSystem),
+            transport: transport,
+            clock: FixedClock(now: checkedAt)
+        )
+
+        let snapshot = try await provider.fetchUsageSnapshot()
+
+        XCTAssertEqual(snapshot.meters.map(\.kind), [.codexSession])
+        XCTAssertEqual(snapshot.meters.map(\.display.planName), ["Pro 20x"])
+        XCTAssertEqual(snapshot.meters.map(\.utilization.value), [21])
+        XCTAssertEqual(snapshot.meters.map(\.resetAt), [Date(timeIntervalSince1970: 1_783_782_000)])
+    }
+
     func testUnauthorizedUsageRefreshesOnceRotatesTokensPreservesUnknownFieldsAndRetries() async throws {
         let fileSystem = RecordingCodexAuthFileSystem(data: authJSON(includeUnknownFields: true), permissions: 0o600)
         let transport = RecordingProviderHTTPTransport(responses: [
@@ -197,7 +242,6 @@ final class CodexUsageProviderTests: XCTestCase {
         )
         let malformedUsageBodies = [
             usageJSON(primaryWindow: nil),
-            usageJSON(secondaryWindow: nil),
             usageJSON(primaryWindow: #"{"reset_at":1783782000,"limit_window_seconds":18000}"#),
             usageJSON(primaryWindow: #"{"used_percent":21,"limit_window_seconds":18000}"#),
             usageJSON(primaryWindow: #"{"used_percent":21,"reset_at":1783782000}"#),
@@ -492,6 +536,57 @@ final class CodexUsageProviderTests: XCTestCase {
           },
           "plan_type": "\(planType)",
           "unknown_top": { "kept": true }
+        }
+        """.utf8)
+    }
+
+    private func liveUsageJSON() -> Data {
+        // Structural mirror of the real live response with all identifiers
+        // removed. Percentages/timestamps are integers, secondary_window is
+        // explicitly null, and live-only sibling fields are present verbatim.
+        Data("""
+        {
+          "plan_type": "prolite",
+          "rate_limit": {
+            "allowed": true,
+            "limit_reached": false,
+            "primary_window": {
+              "used_percent": 38,
+              "limit_window_seconds": 604800,
+              "reset_after_seconds": 472616,
+              "reset_at": 1784354510
+            },
+            "secondary_window": null
+          },
+          "code_review_rate_limit": null,
+          "additional_rate_limits": [
+            {
+              "limit_name": "Model-Spark",
+              "metered_feature": "codex_feature",
+              "rate_limit": {
+                "allowed": true,
+                "limit_reached": false,
+                "primary_window": {
+                  "used_percent": 0,
+                  "limit_window_seconds": 604800,
+                  "reset_after_seconds": 604800,
+                  "reset_at": 1784486695
+                },
+                "secondary_window": null
+              }
+            }
+          ],
+          "credits": {
+            "has_credits": false,
+            "unlimited": false,
+            "overage_limit_reached": false,
+            "balance": "0",
+            "approx_local_messages": [0, 0],
+            "approx_cloud_messages": [0, 0]
+          },
+          "spend_control": { "reached": false, "individual_limit": null },
+          "rate_limit_reached_type": null,
+          "rate_limit_reset_credits": { "available_count": 2 }
         }
         """.utf8)
     }

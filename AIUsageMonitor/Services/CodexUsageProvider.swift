@@ -116,10 +116,17 @@ struct CodexUsageProvider: UsageProviderFetching {
         do {
             let usage = try ProviderJSON.decoder().decode(CodexUsageResponse.self, from: data)
             let planName = try planDisplayName(for: usage.planType)
-            let meters = [
-                try meter(kind: .codexSession, window: usage.rateLimit.primaryWindow, planName: planName),
-                try meter(kind: .codexWeek, window: usage.rateLimit.secondaryWindow, planName: planName)
+            // The live API sends `secondary_window: null` when only the primary
+            // (weekly) window applies, so the weekly meter is optional. Emit the
+            // session meter always and append the weekly meter only when present,
+            // degrading gracefully rather than failing the whole poll. The UI
+            // looks meters up by kind, so an omitted meter is handled cleanly.
+            var meters = [
+                try meter(kind: .codexSession, window: usage.rateLimit.primaryWindow, planName: planName)
             ]
+            if let secondaryWindow = usage.rateLimit.secondaryWindow {
+                meters.append(try meter(kind: .codexWeek, window: secondaryWindow, planName: planName))
+            }
             return ProviderUsageSnapshot(
                 provider: provider,
                 meters: meters,
@@ -201,7 +208,10 @@ private struct CodexUsageResponse: Decodable {
 
 private struct CodexRateLimit: Decodable {
     var primaryWindow: CodexUsageWindow
-    var secondaryWindow: CodexUsageWindow
+    // Optional: the live API returns `secondary_window: null` (and may omit the
+    // key entirely). Synthesized decoding maps both null and a missing key to
+    // nil, so the weekly meter is simply skipped instead of throwing.
+    var secondaryWindow: CodexUsageWindow?
 
     enum CodingKeys: String, CodingKey {
         case primaryWindow = "primary_window"
