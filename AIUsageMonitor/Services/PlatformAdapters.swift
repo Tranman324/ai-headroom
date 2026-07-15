@@ -1,7 +1,36 @@
 import AppKit
 import Foundation
 import Network
+import Security
 import ServiceManagement
+
+enum ProviderExecutableTrust {
+    static let anthropicRequirement = "anchor apple generic and certificate leaf[subject.OU] = \"Q6L2SF6YDW\" and identifier \"com.anthropic.claude-code\""
+    static let openAIRequirement = "anchor apple generic and certificate leaf[subject.OU] = \"2DC432GLL2\" and identifier \"codex\""
+
+    static func satisfies(_ requirementText: String, executableURL: URL) -> Bool {
+        let resolvedURL = executableURL.resolvingSymlinksInPath() as CFURL
+        var staticCode: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(resolvedURL, SecCSFlags(), &staticCode) == errSecSuccess,
+              let staticCode else {
+            return false
+        }
+        var requirement: SecRequirement?
+        guard SecRequirementCreateWithString(requirementText as CFString, SecCSFlags(), &requirement) == errSecSuccess,
+              let requirement else {
+            return false
+        }
+        return SecStaticCodeCheckValidity(staticCode, SecCSFlags(), requirement) == errSecSuccess
+    }
+}
+
+struct WorkspaceExternalURLOpener: ExternalURLOpening {
+    func open(_ url: URL) async {
+        _ = await MainActor.run {
+            NSWorkspace.shared.open(url)
+        }
+    }
+}
 
 final class ConnectivityStateHub: @unchecked Sendable {
     private let lock = NSLock()

@@ -1,6 +1,18 @@
+import Darwin
 import SwiftUI
 
 @main
+enum AIUsageMonitorEntryPoint {
+    static func main() {
+        if CommandLine.arguments.dropFirst().first == ClaudeStatusLineInstaller.bridgeArgument {
+            Darwin.exit(ClaudeStatusLineBridgeCommand.run(
+                forwardsInput: CommandLine.arguments.contains(ClaudeStatusLineInstaller.forwardArgument)
+            ))
+        }
+        AIUsageMonitorApp.main()
+    }
+}
+
 struct AIUsageMonitorApp: App {
     @NSApplicationDelegateAdaptor(AIUsageMonitorAppDelegate.self) private var appDelegate
 

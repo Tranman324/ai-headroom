@@ -46,6 +46,10 @@ final class FixtureIntegrityTests: XCTestCase {
             AppNavigationState(meterRoute: .detail(.claudeWeekFable), detailRange: .twentyFourHours)
         )
         XCTAssertTrue(UsageFixtureScenario.settings.navigation(startsWithHistoryExpanded: false).isSettingsPresented)
+        XCTAssertEqual(
+            UsageFixtureScenario.providerConnections.navigation(startsWithHistoryExpanded: false),
+            AppNavigationState(isSettingsPresented: true, isProviderConnectionsPresented: true)
+        )
     }
 
     func testFixturesContainNoCredentialShapedSecrets() throws {

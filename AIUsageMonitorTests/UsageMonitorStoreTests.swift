@@ -118,6 +118,125 @@ final class UsageMonitorStoreTests: XCTestCase {
         XCTAssertEqual(store.settings.historyRetention.days, 120)
     }
 
+    func testProviderAuthenticationUsesInjectedProviderAndExternalURLOpener() async throws {
+        let challenge = ProviderAuthenticationChallenge(
+            provider: .codex,
+            authorizationURL: try XCTUnwrap(URL(string: "https://auth.openai.example/device")),
+            userCode: "TEST-1234"
+        )
+        let provider = AuthenticatingTestProvider(challenge: challenge)
+        let urlOpener = RecordingExternalURLOpener()
+        let dependencies = TestDependencyFactory.make(
+            providers: [provider],
+            externalURLOpener: urlOpener
+        )
+        let store = UsageMonitorStore(dependencies: dependencies)
+
+        try await store.handle(.openSettings)
+        try await store.handle(.openProviderConnections)
+        try await store.handle(.startProviderAuthentication(.codex))
+        let startCount = await provider.authenticationStartCount()
+        let openedURLs = await urlOpener.openedURLs()
+
+        XCTAssertTrue(store.navigation.isProviderConnectionsPresented)
+        XCTAssertEqual(store.providerAuthenticationChallenge, challenge)
+        XCTAssertNil(store.providerConnectionError)
+        XCTAssertEqual(startCount, 1)
+        XCTAssertEqual(openedURLs, [challenge.authorizationURL])
+    }
+
+    func testDeviceCodeAuthenticationObservesConnectedAccountAndClearsChallenge() async throws {
+        let challenge = ProviderAuthenticationChallenge(
+            provider: .codex,
+            authorizationURL: try XCTUnwrap(URL(string: "https://auth.openai.example/device")),
+            userCode: "TEST-1234"
+        )
+        let provider = AuthenticatingTestProvider(challenge: challenge)
+        let dependencies = TestDependencyFactory.make(providers: [provider])
+        let store = UsageMonitorStore(
+            dependencies: dependencies,
+            authenticationObservationInterval: .milliseconds(1),
+            authenticationObservationLimit: 10
+        )
+
+        try await store.handle(.openProviderConnections)
+        try await store.handle(.startProviderAuthentication(.codex))
+        for _ in 0 ..< 20 where store.providerAuthenticationChallenge != nil {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+
+        XCTAssertNil(store.providerAuthenticationChallenge)
+        XCTAssertNil(store.providerConnectionError)
+        XCTAssertEqual(store.providerConnectionStatuses[.codex]?.state, .connected)
+    }
+
+    func testDeviceCodeAuthenticationTimeoutClearsChallengeAndReportsRetry() async throws {
+        let challenge = ProviderAuthenticationChallenge(
+            provider: .codex,
+            authorizationURL: try XCTUnwrap(URL(string: "https://auth.openai.example/device")),
+            userCode: "TEST-1234"
+        )
+        let provider = AuthenticatingTestProvider(challenge: challenge, completesAuthentication: false)
+        let dependencies = TestDependencyFactory.make(providers: [provider])
+        let store = UsageMonitorStore(
+            dependencies: dependencies,
+            authenticationObservationInterval: .milliseconds(1),
+            authenticationObservationLimit: 1
+        )
+
+        try await store.handle(.openProviderConnections)
+        try await store.handle(.startProviderAuthentication(.codex))
+        for _ in 0 ..< 20 where store.providerAuthenticationChallenge != nil {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+
+        XCTAssertNil(store.providerAuthenticationChallenge)
+        XCTAssertEqual(store.providerConnectionError?.code, .unauthorized)
+        XCTAssertEqual(store.providerConnectionStatuses[.codex]?.state, .disconnected)
+    }
+
+    func testProviderManagedAuthenticationCompletesWithoutAnAppOwnedURL() async throws {
+        let provider = ProviderManagedAuthenticationTestProvider()
+        let urlOpener = RecordingExternalURLOpener()
+        let dependencies = TestDependencyFactory.make(
+            providers: [provider],
+            externalURLOpener: urlOpener
+        )
+        let store = UsageMonitorStore(dependencies: dependencies)
+
+        try await store.handle(.openProviderConnections)
+        XCTAssertEqual(store.providerConnectionStatuses[.claude]?.state, .disconnected)
+
+        try await store.handle(.startProviderAuthentication(.claude))
+        let startCount = await provider.authenticationStartCount()
+        let openedURLs = await urlOpener.openedURLs()
+
+        XCTAssertEqual(store.providerConnectionStatuses[.claude]?.state, .connected)
+        XCTAssertNil(store.providerAuthenticationChallenge)
+        XCTAssertNil(store.providerConnectionError)
+        XCTAssertEqual(startCount, 1)
+        XCTAssertEqual(openedURLs, [])
+    }
+
+    func testClosingConnectionsCancelsProviderOwnedAuthenticationProcess() async throws {
+        let provider = CancellableAuthenticationTestProvider()
+        let dependencies = TestDependencyFactory.make(providers: [provider])
+        let store = UsageMonitorStore(dependencies: dependencies)
+
+        try await store.handle(.openProviderConnections)
+        let authenticationTask = Task { @MainActor in
+            try await store.handle(.startProviderAuthentication(.claude))
+        }
+        await provider.waitUntilAuthenticationStarted()
+        try await store.handle(.closeProviderConnections)
+        try await authenticationTask.value
+        let wasCancelled = await provider.wasCancelled()
+
+        XCTAssertTrue(wasCancelled)
+        XCTAssertTrue(store.authenticatingProviders.isEmpty)
+        XCTAssertNil(store.providerConnectionError)
+    }
+
     func testHistoryLoadingUsesInjectedHistoryStore() async throws {
         let historyStore = InMemoryHistoryStore(initialSnapshots: UsageMonitorFixtures.expandedHistorySnapshots)
         let dependencies = TestDependencyFactory.make(historyStore: historyStore)
@@ -169,6 +288,148 @@ actor SequencedProviderClient: UsageProviderFetching {
     }
 }
 
+private actor AuthenticatingTestProvider:
+    UsageProviderFetching,
+    ProviderAuthenticationManaging,
+    ProviderConnectionChecking
+{
+    nonisolated let provider: ProviderID = .codex
+    private let challenge: ProviderAuthenticationChallenge
+    private let completesAuthentication: Bool
+    private var starts = 0
+    private var authenticationStarted = false
+
+    init(challenge: ProviderAuthenticationChallenge, completesAuthentication: Bool = true) {
+        self.challenge = challenge
+        self.completesAuthentication = completesAuthentication
+    }
+
+    func fetchUsageSnapshot() async throws -> ProviderUsageSnapshot {
+        ProviderUsageSnapshot(provider: provider, meters: [], health: .noData())
+    }
+
+    func startAuthentication() async throws -> ProviderAuthenticationResult {
+        starts += 1
+        authenticationStarted = true
+        return .challenge(challenge)
+    }
+
+    func connectionStatus() async -> ProviderConnectionStatus {
+        let isConnected = authenticationStarted && completesAuthentication
+        return ProviderConnectionStatus(
+            provider: provider,
+            state: isConnected ? .connected : .disconnected,
+            planName: isConnected ? "Pro 20x" : nil,
+            usageSyncEnabled: isConnected,
+            detail: isConnected ? "Usage sync enabled" : "Sign in with ChatGPT to read Codex limits."
+        )
+    }
+
+    func authenticationStartCount() -> Int {
+        starts
+    }
+}
+
+private actor ProviderManagedAuthenticationTestProvider:
+    UsageProviderFetching,
+    ProviderAuthenticationManaging,
+    ProviderConnectionChecking
+{
+    nonisolated let provider: ProviderID = .claude
+    private var isConnected = false
+    private var starts = 0
+
+    func fetchUsageSnapshot() async throws -> ProviderUsageSnapshot {
+        ProviderUsageSnapshot(provider: provider, meters: [], health: .noData())
+    }
+
+    func startAuthentication() async throws -> ProviderAuthenticationResult {
+        starts += 1
+        isConnected = true
+        return .completed
+    }
+
+    func connectionStatus() async -> ProviderConnectionStatus {
+        ProviderConnectionStatus(
+            provider: provider,
+            state: isConnected ? .connected : .disconnected,
+            planName: isConnected ? "Max" : nil,
+            usageSyncEnabled: isConnected,
+            detail: isConnected ? "Usage sync enabled" : "Sign in with your Claude subscription."
+        )
+    }
+
+    func authenticationStartCount() -> Int {
+        starts
+    }
+}
+
+private actor CancellableAuthenticationTestProvider:
+    UsageProviderFetching,
+    ProviderAuthenticationManaging,
+    ProviderConnectionChecking
+{
+    nonisolated let provider: ProviderID = .claude
+    private var started = false
+    private var cancelled = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func fetchUsageSnapshot() async throws -> ProviderUsageSnapshot {
+        ProviderUsageSnapshot(provider: provider, meters: [], health: .noData())
+    }
+
+    func startAuthentication() async throws -> ProviderAuthenticationResult {
+        started = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+        do {
+            try await Task.sleep(for: .seconds(30))
+            return .completed
+        } catch {
+            cancelled = Task.isCancelled
+            throw error
+        }
+    }
+
+    func connectionStatus() async -> ProviderConnectionStatus {
+        ProviderConnectionStatus(
+            provider: provider,
+            state: .disconnected,
+            planName: nil,
+            usageSyncEnabled: false,
+            detail: "Sign in with your Claude subscription."
+        )
+    }
+
+    func waitUntilAuthenticationStarted() async {
+        if started {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func wasCancelled() -> Bool {
+        cancelled
+    }
+}
+
+private actor RecordingExternalURLOpener: ExternalURLOpening {
+    private var opened: [URL] = []
+
+    func open(_ url: URL) async {
+        opened.append(url)
+    }
+
+    func openedURLs() -> [URL] {
+        opened
+    }
+}
+
 enum TestProviderError: LocalizedError {
     case unavailable
 
@@ -187,7 +448,8 @@ enum TestDependencyFactory {
         settingsStore: any SettingsStoring = RecordingSettingsStore(),
         clock: any ClockProviding = FixedClock(now: UsageMonitorFixtures.baseDate.addingTimeInterval(12_345)),
         connectivityMonitor: any ConnectivityMonitoring = StaticConnectivityMonitor(state: .online),
-        loginRegistration: any LoginRegistering = RecordingLoginRegistration()
+        loginRegistration: any LoginRegistering = RecordingLoginRegistration(),
+        externalURLOpener: any ExternalURLOpening = NoopExternalURLOpener()
     ) -> AppDependencies {
         AppDependencies(
             providers: providers,
@@ -196,7 +458,8 @@ enum TestDependencyFactory {
             clock: clock,
             connectivityMonitor: connectivityMonitor,
             lifecycleEvents: NoopLifecycleEvents(),
-            loginRegistration: loginRegistration
+            loginRegistration: loginRegistration,
+            externalURLOpener: externalURLOpener
         )
     }
 }

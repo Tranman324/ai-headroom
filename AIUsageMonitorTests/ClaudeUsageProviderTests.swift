@@ -1,530 +1,668 @@
-import Security
+import Darwin
 import XCTest
 @testable import AIUsageMonitor
 
 final class ClaudeUsageProviderTests: XCTestCase {
-    private let token = "fake-claude-access-token"
     private let checkedAt = Date(timeIntervalSince1970: 1_783_756_800)
 
-    func testProductionKeychainQueryTargetsCurrentAccountExactly() {
-        let reader = KeychainClaudeCredentialReader()
-        let query = reader.query
-
-        XCTAssertEqual(reader.account, NSUserName())
-        XCTAssertEqual(query.count, 5)
-        XCTAssertEqual(query[kSecClass as String] as? String, kSecClassGenericPassword as String)
-        XCTAssertEqual(query[kSecAttrService as String] as? String, "Claude Code-credentials")
-        XCTAssertEqual(query[kSecAttrAccount as String] as? String, NSUserName())
-        XCTAssertEqual(query[kSecReturnData as String] as? Bool, true)
-        XCTAssertEqual(query[kSecMatchLimit as String] as? String, kSecMatchLimitOne as String)
-    }
-
-    func testSuccessfulFetchMapsAllFiveClaudeMetersAndRequestShape() async throws {
-        let credentialReader = FakeClaudeCredentialReader(data: credentialJSON(token: token))
-        let transport = FakeProviderHTTPTransport(responses: [
-            .success(ProviderHTTPResponse(statusCode: 200, data: fullUsageJSON()))
-        ])
+    func testFetchMapsStatusLineRateLimitsWithoutReadingCredentials() async throws {
+        let cache = ClaudeUsageCache(
+            capturedAtUnixSeconds: checkedAt.timeIntervalSince1970,
+            fiveHour: ClaudeRateLimitCache(usedPercentage: 12, resetsAtUnixSeconds: 1_783_782_000),
+            sevenDay: ClaudeRateLimitCache(usedPercentage: 57, resetsAtUnixSeconds: 1_784_419_200)
+        )
         let provider = ClaudeUsageProvider(
-            credentialReader: credentialReader,
-            transport: transport,
+            cli: StubClaudeCLI(statuses: [loggedInStatus]),
+            usageCache: StubClaudeUsageCache(cache: cache),
+            statusLineInstaller: StubClaudeStatusLineInstaller(installed: true),
             clock: FixedClock(now: checkedAt)
         )
 
         let snapshot = try await provider.fetchUsageSnapshot()
-        let requests = await transport.requests
-        let authorization = requests.first?.headers["Authorization"]
 
         XCTAssertEqual(snapshot.provider, .claude)
-        XCTAssertEqual(snapshot.health.kind, .fresh)
-        XCTAssertEqual(snapshot.health.checkedAt, checkedAt)
-        XCTAssertEqual(snapshot.meters.map(\.provider), Array(repeating: .claude, count: 5))
-        XCTAssertEqual(snapshot.meters.map(\.kind), [
-            .claudeSession,
-            .claudeWeekAll,
-            .claudeWeekFable,
-            .claudeWeekSonnet,
-            .claudeWeekHaiku
-        ])
-        XCTAssertEqual(snapshot.meters.map(\.utilization.value), [11, 22, 33, 44, 55])
-        XCTAssertEqual(snapshot.meters.map(\.resetAt), [
-            date("2026-07-11T15:00:00Z"),
-            date("2026-07-18T15:00:00Z"),
-            date("2026-07-18T16:00:00Z"),
-            date("2026-07-18T17:00:00Z"),
-            date("2026-07-18T18:00:00Z")
-        ])
-        XCTAssertEqual(requests.count, 1)
-        XCTAssertEqual(requests.first?.method, "GET")
-        XCTAssertEqual(requests.first?.url.absoluteString, "https://api.anthropic.com/api/oauth/usage")
-        XCTAssertEqual(requests.first?.headers["anthropic-beta"], "oauth-2025-04-20")
-        XCTAssertEqual(authorization?.hasPrefix("Bearer "), true)
-        XCTAssertEqual(authorization?.count, "Bearer ".count + token.count)
-
-        let encodedSnapshot = try String(data: JSONEncoder().encode(snapshot), encoding: .utf8).unwrap()
-        XCTAssertFalse(encodedSnapshot.contains(token))
+        XCTAssertEqual(snapshot.health, .fresh(checkedAt: checkedAt))
+        XCTAssertEqual(snapshot.meters.map(\.kind), [.claudeSession, .claudeWeekAll])
+        XCTAssertEqual(snapshot.meters.map(\.utilization.value), [12, 57])
+        XCTAssertEqual(snapshot.meters.map(\.display.planName), ["Max", "Max"])
     }
 
-    func testCredentialReaderRunsForEveryFetchInvocation() async throws {
-        let credentialReader = FakeClaudeCredentialReader(data: credentialJSON(token: token))
-        let transport = FakeProviderHTTPTransport(responses: [
-            .success(ProviderHTTPResponse(statusCode: 200, data: fullUsageJSON())),
-            .success(ProviderHTTPResponse(statusCode: 200, data: fullUsageJSON()))
-        ])
+    func testConnectedAccountWithoutStatusLineDataReturnsNoData() async throws {
         let provider = ClaudeUsageProvider(
-            credentialReader: credentialReader,
-            transport: transport,
-            clock: FixedClock(now: checkedAt)
-        )
-
-        _ = try await provider.fetchUsageSnapshot()
-        _ = try await provider.fetchUsageSnapshot()
-
-        let readCount = await credentialReader.readCount
-        let requests = await transport.requests
-        XCTAssertEqual(readCount, 2)
-        XCTAssertEqual(requests.count, 2)
-    }
-
-    func testUnknownFieldsAndUnrelatedLimitsAreTolerated() async throws {
-        let credentialReader = FakeClaudeCredentialReader(data: credentialJSON(token: token, includeUnknownFields: true))
-        let transport = FakeProviderHTTPTransport(responses: [
-            .success(ProviderHTTPResponse(statusCode: 200, data: fullUsageJSON(includeUnknownFields: true)))
-        ])
-        let provider = ClaudeUsageProvider(
-            credentialReader: credentialReader,
-            transport: transport,
+            cli: StubClaudeCLI(statuses: [loggedInStatus]),
+            usageCache: StubClaudeUsageCache(cache: nil),
+            statusLineInstaller: StubClaudeStatusLineInstaller(installed: false),
             clock: FixedClock(now: checkedAt)
         )
 
         let snapshot = try await provider.fetchUsageSnapshot()
 
-        XCTAssertEqual(snapshot.meters.count, 5)
-        XCTAssertEqual(snapshot.meters.map(\.kind), [
-            .claudeSession,
-            .claudeWeekAll,
-            .claudeWeekFable,
-            .claudeWeekSonnet,
-            .claudeWeekHaiku
-        ])
+        XCTAssertEqual(snapshot.meters, [])
+        XCTAssertEqual(snapshot.health, .noData(checkedAt: checkedAt))
     }
 
-    // Previously this asserted `.malformedResponse` when a model-scoped weekly
-    // limit was missing. The live API only returns model limits that are
-    // currently active (e.g. Fable alone), so the provider now degrades
-    // gracefully: it omits the absent model's meter instead of failing the poll.
-    func testMissingModelLimitOmitsThatMeterWithoutFailing() async throws {
-        let credentialReader = FakeClaudeCredentialReader(data: credentialJSON(token: token))
-        let transport = FakeProviderHTTPTransport(responses: [
-            .success(ProviderHTTPResponse(statusCode: 200, data: fullUsageJSON(omitHaiku: true)))
-        ])
+    func testDisconnectedAccountIsReportedAsAuthenticationRequired() async {
         let provider = ClaudeUsageProvider(
-            credentialReader: credentialReader,
-            transport: transport,
-            clock: FixedClock(now: checkedAt)
-        )
-
-        let snapshot = try await provider.fetchUsageSnapshot()
-
-        XCTAssertEqual(snapshot.meters.map(\.kind), [
-            .claudeSession,
-            .claudeWeekAll,
-            .claudeWeekFable,
-            .claudeWeekSonnet
-        ])
-        XCTAssertFalse(snapshot.meters.contains { $0.kind == .claudeWeekHaiku })
-    }
-
-    func testLiveShapePercentAndNullableScopeMapsAvailableMeters() async throws {
-        let credentialReader = FakeClaudeCredentialReader(data: credentialJSON(token: token))
-        let transport = FakeProviderHTTPTransport(responses: [
-            .success(ProviderHTTPResponse(statusCode: 200, data: liveShapeUsageJSON()))
-        ])
-        let provider = ClaudeUsageProvider(
-            credentialReader: credentialReader,
-            transport: transport,
-            clock: FixedClock(now: checkedAt)
-        )
-
-        let snapshot = try await provider.fetchUsageSnapshot()
-
-        // Live payload carries only one active model-scoped weekly limit (Fable),
-        // reports usage as integer `percent`, and sets `scope: null` on the
-        // non-model limits. Session + week-all + Fable should all map.
-        XCTAssertEqual(snapshot.meters.map(\.kind), [
-            .claudeSession,
-            .claudeWeekAll,
-            .claudeWeekFable
-        ])
-        XCTAssertEqual(snapshot.meters.map(\.utilization.value), [16, 71, 93])
-        XCTAssertEqual(snapshot.health.kind, .fresh)
-    }
-
-    func testUnknownExtraModelLimitIsSkipped() async throws {
-        let credentialReader = FakeClaudeCredentialReader(data: credentialJSON(token: token))
-        let transport = FakeProviderHTTPTransport(responses: [
-            .success(ProviderHTTPResponse(statusCode: 200, data: liveShapeUsageJSON(includeUnknownModel: true)))
-        ])
-        let provider = ClaudeUsageProvider(
-            credentialReader: credentialReader,
-            transport: transport,
-            clock: FixedClock(now: checkedAt)
-        )
-
-        let snapshot = try await provider.fetchUsageSnapshot()
-
-        // An extra `weekly_scoped` entry for an unrecognized model must be
-        // ignored rather than mapped to a meter or failing the poll.
-        XCTAssertEqual(snapshot.meters.map(\.kind), [
-            .claudeSession,
-            .claudeWeekAll,
-            .claudeWeekFable
-        ])
-    }
-
-    func testMalformedTimestampFailsWithoutResponseBodyLeakage() async {
-        let responseBody = fullUsageJSON(sessionReset: "not-a-date")
-        let credentialReader = FakeClaudeCredentialReader(data: credentialJSON(token: token))
-        let transport = FakeProviderHTTPTransport(responses: [
-            .success(ProviderHTTPResponse(statusCode: 200, data: responseBody))
-        ])
-        let provider = ClaudeUsageProvider(
-            credentialReader: credentialReader,
-            transport: transport,
-            clock: FixedClock(now: checkedAt)
-        )
-
-        await assertProviderFailure(from: provider, code: .malformedResponse, disallowing: [
-            token,
-            String(data: responseBody, encoding: .utf8)!
-        ])
-    }
-
-    func testMissingRequiredWindowFailsWithoutResponseBodyLeakage() async {
-        let responseBody = Data("""
-        {
-          "seven_day": { "utilization": 22, "resets_at": "2026-07-18T15:00:00Z" },
-          "limits": [
-            { "utilization": 33, "resets_at": "2026-07-18T16:00:00Z", "scope": { "model": { "display_name": "Fable" } } },
-            { "utilization": 44, "resets_at": "2026-07-18T17:00:00Z", "scope": { "model": { "display_name": "Sonnet" } } },
-            { "utilization": 55, "resets_at": "2026-07-18T18:00:00Z", "scope": { "model": { "display_name": "Haiku" } } }
-          ],
-          "access_token": "fake-claude-access-token"
-        }
-        """.utf8)
-        let provider = ClaudeUsageProvider(
-            credentialReader: FakeClaudeCredentialReader(data: credentialJSON(token: token)),
-            transport: FakeProviderHTTPTransport(responses: [
-                .success(ProviderHTTPResponse(statusCode: 200, data: responseBody))
+            cli: StubClaudeCLI(statuses: [
+                ClaudeAuthenticationStatus(loggedIn: false, authMethod: nil, subscriptionType: nil)
             ]),
+            usageCache: StubClaudeUsageCache(cache: nil),
+            statusLineInstaller: StubClaudeStatusLineInstaller(installed: false),
             clock: FixedClock(now: checkedAt)
         )
 
-        await assertProviderFailure(from: provider, code: .malformedResponse, disallowing: [
-            token,
-            String(data: responseBody, encoding: .utf8)!
-        ])
-    }
-
-    func testModelLimitMissingPercentAndUtilizationFailsWithoutResponseBodyLeakage() async {
-        // A model-scoped weekly limit that omits both `percent` and
-        // `utilization` must throw the sanitized malformedResponse failure
-        // rather than silently defaulting the usage to 0. Pins the decoder
-        // contract in ClaudeUsageProvider's ClaudeUsageLimit initializer.
-        let responseBody = Data("""
-        {
-          "five_hour": { "utilization": 11, "resets_at": "2026-07-11T15:00:00Z" },
-          "seven_day": { "utilization": 22, "resets_at": "2026-07-18T15:00:00Z" },
-          "limits": [
-            { "resets_at": "2026-07-18T16:00:00Z", "scope": { "model": { "display_name": "Fable" } } }
-          ],
-          "access_token": "fake-claude-access-token"
-        }
-        """.utf8)
-        let provider = ClaudeUsageProvider(
-            credentialReader: FakeClaudeCredentialReader(data: credentialJSON(token: token)),
-            transport: FakeProviderHTTPTransport(responses: [
-                .success(ProviderHTTPResponse(statusCode: 200, data: responseBody))
-            ]),
-            clock: FixedClock(now: checkedAt)
-        )
-
-        await assertProviderFailure(from: provider, code: .malformedResponse, disallowing: [
-            token,
-            String(data: responseBody, encoding: .utf8)!
-        ])
-    }
-
-    func testCredentialFailuresAreSanitized() async {
-        let malformedCredential = Data(#"{"claudeAiOauth":{"accessToken":"fake-claude-access-token"}}"#.utf8.dropLast())
-        let provider = ClaudeUsageProvider(
-            credentialReader: FakeClaudeCredentialReader(data: malformedCredential),
-            transport: FakeProviderHTTPTransport(responses: []),
-            clock: FixedClock(now: checkedAt)
-        )
-
-        await assertProviderFailure(from: provider, code: .malformedResponse, disallowing: [
-            token,
-            String(data: malformedCredential, encoding: .utf8) ?? ""
-        ])
-    }
-
-    func testMissingTokenFailsSanitized() async {
-        let missingTokenCredential = Data(#"{"claudeAiOauth":{"accessToken":" "}}"#.utf8)
-        let provider = ClaudeUsageProvider(
-            credentialReader: FakeClaudeCredentialReader(data: missingTokenCredential),
-            transport: FakeProviderHTTPTransport(responses: []),
-            clock: FixedClock(now: checkedAt)
-        )
-
-        await assertProviderFailure(from: provider, code: .malformedResponse, disallowing: [
-            String(data: missingTokenCredential, encoding: .utf8)!
-        ])
-    }
-
-    func testUnreadableCredentialFailureIsSanitized() async {
-        let provider = ClaudeUsageProvider(
-            credentialReader: FakeClaudeCredentialReader(error: SecretCredentialError()),
-            transport: FakeProviderHTTPTransport(responses: []),
-            clock: FixedClock(now: checkedAt)
-        )
-
-        await assertProviderFailure(from: provider, code: .unavailable, disallowing: [
-            token,
-            SecretCredentialError().localizedDescription
-        ])
-    }
-
-    func testStatusAndTransportFailuresAreSanitized() async {
-        let secretBody = Data(#"{"access_token":"fake-claude-access-token","error":"nope"}"#.utf8)
-        let statusProvider = ClaudeUsageProvider(
-            credentialReader: FakeClaudeCredentialReader(data: credentialJSON(token: token)),
-            transport: FakeProviderHTTPTransport(responses: [
-                .success(ProviderHTTPResponse(statusCode: 401, data: secretBody))
-            ]),
-            clock: FixedClock(now: checkedAt)
-        )
-
-        await assertProviderFailure(from: statusProvider, code: .unauthorized, disallowing: [
-            token,
-            String(data: secretBody, encoding: .utf8)!
-        ])
-
-        let transportProvider = ClaudeUsageProvider(
-            credentialReader: FakeClaudeCredentialReader(data: credentialJSON(token: token)),
-            transport: FakeProviderHTTPTransport(responses: [
-                .failure(SecretTransportError())
-            ]),
-            clock: FixedClock(now: checkedAt)
-        )
-
-        await assertProviderFailure(from: transportProvider, code: .unavailable, disallowing: [
-            token,
-            SecretTransportError().localizedDescription
-        ])
-    }
-
-    private func assertProviderFailure(
-        from provider: ClaudeUsageProvider,
-        code: ProviderErrorCode,
-        disallowing forbiddenFragments: [String],
-        file: StaticString = #filePath,
-        line: UInt = #line
-    ) async {
         do {
             _ = try await provider.fetchUsageSnapshot()
-            XCTFail("Expected provider failure.", file: file, line: line)
+            XCTFail("Expected authentication failure")
         } catch let failure as ProviderClientFailure {
-            let description = failure.localizedDescription
-            XCTAssertEqual(failure.code, code, file: file, line: line)
-            for fragment in forbiddenFragments where !fragment.isEmpty {
-                XCTAssertFalse(description.contains(fragment), file: file, line: line)
-            }
+            XCTAssertEqual(failure, .authenticationRequired(provider: .claude))
         } catch {
-            XCTFail("Expected sanitized provider failure.", file: file, line: line)
+            XCTFail("Unexpected error: \(error)")
         }
     }
 
-    private func credentialJSON(token: String, includeUnknownFields: Bool = false) -> Data {
-        let suffix = includeUnknownFields ? #","extra":{"nested":true}"# : ""
-        return Data(#"{"claudeAiOauth":{"accessToken":"\#(token)"\#(suffix)},"other":"preserved"}"#.utf8)
+    func testAPIKeyLoginDoesNotMasqueradeAsClaudeOAuthConnection() async throws {
+        let apiKeyStatus = ClaudeAuthenticationStatus(
+            loggedIn: true,
+            authMethod: "api_key",
+            subscriptionType: nil
+        )
+        let cli = StubClaudeCLI(statuses: [apiKeyStatus, loggedInStatus])
+        let installer = StubClaudeStatusLineInstaller(installed: false)
+        let provider = ClaudeUsageProvider(
+            cli: cli,
+            usageCache: StubClaudeUsageCache(cache: nil),
+            statusLineInstaller: installer,
+            clock: FixedClock(now: checkedAt)
+        )
+
+        let result = try await provider.startAuthentication()
+        let loginStartCount = await cli.loginStartCount()
+        let isInstalled = await installer.isInstalled()
+
+        XCTAssertEqual(result, .completed)
+        XCTAssertEqual(loginStartCount, 1)
+        XCTAssertTrue(isInstalled)
     }
 
-    private func fullUsageJSON(
-        includeUnknownFields: Bool = false,
-        omitHaiku: Bool = false,
-        sessionReset: String = "2026-07-11T15:00:00Z"
-    ) -> Data {
-        let topLevelExtra = includeUnknownFields ? #","unknown_top":{"nested":true}"# : ""
-        let nestedExtra = includeUnknownFields ? #","unknown_nested":42"# : ""
-        let haikuLimit = omitHaiku ? "" : """
-        ,{
-          "utilization": 55,
-          "resets_at": "2026-07-18T18:00:00Z",
-          "scope": { "model": { "display_name": "Haiku"\(nestedExtra) } }
+    func testMalformedRateLimitFailsLocally() async {
+        let cache = ClaudeUsageCache(
+            capturedAtUnixSeconds: checkedAt.timeIntervalSince1970,
+            fiveHour: ClaudeRateLimitCache(usedPercentage: 101, resetsAtUnixSeconds: 1_783_782_000),
+            sevenDay: nil
+        )
+        let provider = ClaudeUsageProvider(
+            cli: StubClaudeCLI(statuses: [loggedInStatus]),
+            usageCache: StubClaudeUsageCache(cache: cache),
+            statusLineInstaller: StubClaudeStatusLineInstaller(installed: true),
+            clock: FixedClock(now: checkedAt)
+        )
+
+        do {
+            _ = try await provider.fetchUsageSnapshot()
+            XCTFail("Expected malformed response")
+        } catch let failure as ProviderClientFailure {
+            XCTAssertEqual(failure, .malformedResponse(provider: .claude))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
         }
+    }
+
+    func testEnableUsageSyncDoesNotForceReloginForConnectedAccount() async throws {
+        let cli = StubClaudeCLI(statuses: [loggedInStatus])
+        let installer = StubClaudeStatusLineInstaller(installed: false)
+        let cache = StubClaudeUsageCache(cache: nil)
+        let provider = ClaudeUsageProvider(
+            cli: cli,
+            usageCache: cache,
+            statusLineInstaller: installer,
+            clock: FixedClock(now: checkedAt)
+        )
+
+        let result = try await provider.startAuthentication()
+        let loginStartCount = await cli.loginStartCount()
+        let isInstalled = await installer.isInstalled()
+        let invalidationCount = await cache.invalidationCount()
+
+        XCTAssertEqual(result, .completed)
+        XCTAssertEqual(loginStartCount, 0)
+        XCTAssertTrue(isInstalled)
+        XCTAssertEqual(invalidationCount, 0)
+    }
+
+    func testReconnectInvalidatesUsageFromThePreviousClaudeAccount() async throws {
+        let cli = StubClaudeCLI(statuses: [loggedInStatus, loggedInStatus])
+        let installer = StubClaudeStatusLineInstaller(installed: true)
+        let cache = StubClaudeUsageCache(cache: nil)
+        let provider = ClaudeUsageProvider(
+            cli: cli,
+            usageCache: cache,
+            statusLineInstaller: installer,
+            clock: FixedClock(now: checkedAt)
+        )
+
+        _ = try await provider.startAuthentication()
+        let invalidationCount = await cache.invalidationCount()
+
+        XCTAssertEqual(invalidationCount, 1)
+    }
+
+    func testOldUsageCacheIsMarkedStaleThenExpires() async throws {
+        let staleCache = ClaudeUsageCache(
+            capturedAtUnixSeconds: checkedAt.addingTimeInterval(-60 * 60).timeIntervalSince1970,
+            fiveHour: ClaudeRateLimitCache(usedPercentage: 12, resetsAtUnixSeconds: checkedAt.addingTimeInterval(60 * 60).timeIntervalSince1970),
+            sevenDay: nil
+        )
+        let expiredCache = ClaudeUsageCache(
+            capturedAtUnixSeconds: checkedAt.addingTimeInterval(-25 * 60 * 60).timeIntervalSince1970,
+            fiveHour: ClaudeRateLimitCache(usedPercentage: 12, resetsAtUnixSeconds: checkedAt.addingTimeInterval(60 * 60).timeIntervalSince1970),
+            sevenDay: nil
+        )
+        let staleProvider = ClaudeUsageProvider(
+            cli: StubClaudeCLI(statuses: [loggedInStatus]),
+            usageCache: StubClaudeUsageCache(cache: staleCache),
+            statusLineInstaller: StubClaudeStatusLineInstaller(installed: true),
+            clock: FixedClock(now: checkedAt)
+        )
+        let expiredProvider = ClaudeUsageProvider(
+            cli: StubClaudeCLI(statuses: [loggedInStatus]),
+            usageCache: StubClaudeUsageCache(cache: expiredCache),
+            statusLineInstaller: StubClaudeStatusLineInstaller(installed: true),
+            clock: FixedClock(now: checkedAt)
+        )
+
+        let staleSnapshot = try await staleProvider.fetchUsageSnapshot()
+        let expiredSnapshot = try await expiredProvider.fetchUsageSnapshot()
+
+        XCTAssertEqual(staleSnapshot.health.kind, .stale)
+        XCTAssertEqual(expiredSnapshot.health.kind, .noData)
+        XCTAssertTrue(expiredSnapshot.meters.isEmpty)
+    }
+
+    func testDisconnectedAccountUsesClaudeOwnedLoginThenInstallsBridge() async throws {
+        let cli = StubClaudeCLI(statuses: [
+            ClaudeAuthenticationStatus(loggedIn: false, authMethod: nil, subscriptionType: nil),
+            loggedInStatus
+        ])
+        let installer = StubClaudeStatusLineInstaller(installed: false)
+        let provider = ClaudeUsageProvider(
+            cli: cli,
+            usageCache: StubClaudeUsageCache(cache: nil),
+            statusLineInstaller: installer,
+            clock: FixedClock(now: checkedAt)
+        )
+
+        let result = try await provider.startAuthentication()
+        let loginStartCount = await cli.loginStartCount()
+        let isInstalled = await installer.isInstalled()
+
+        XCTAssertEqual(result, .completed)
+        XCTAssertEqual(loginStartCount, 1)
+        XCTAssertTrue(isInstalled)
+    }
+
+    func testConnectionStatusSeparatesOAuthFromUsageSync() async {
+        let provider = ClaudeUsageProvider(
+            cli: StubClaudeCLI(statuses: [loggedInStatus]),
+            usageCache: StubClaudeUsageCache(cache: nil),
+            statusLineInstaller: StubClaudeStatusLineInstaller(installed: false),
+            clock: FixedClock(now: checkedAt)
+        )
+
+        let status = await provider.connectionStatus()
+
+        XCTAssertEqual(status.state, .connected)
+        XCTAssertEqual(status.planName, "Max")
+        XCTAssertEqual(status.usageSyncEnabled, false)
+        XCTAssertEqual(status.detail, "Enable usage sync to show limits.")
+    }
+
+    func testConnectionStatusRejectsNonSubscriptionAuthentication() async {
+        let provider = ClaudeUsageProvider(
+            cli: StubClaudeCLI(statuses: [
+                ClaudeAuthenticationStatus(loggedIn: true, authMethod: "api_key", subscriptionType: nil)
+            ]),
+            usageCache: StubClaudeUsageCache(cache: nil),
+            statusLineInstaller: StubClaudeStatusLineInstaller(installed: true),
+            clock: FixedClock(now: checkedAt)
+        )
+
+        let status = await provider.connectionStatus()
+
+        XCTAssertEqual(status.state, .disconnected)
+        XCTAssertNil(status.planName)
+        XCTAssertEqual(status.usageSyncEnabled, false)
+    }
+
+    func testCLIClientInvokesClaudeOwnedStatusAndLoginCommands() async throws {
+        let temporaryRoot = temporaryDirectory()
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        let markerURL = temporaryRoot.appendingPathComponent("login-called")
+        let script = """
+        if [ "$1 $2 $3" = "auth status --json" ]; then
+          printf '%s\\n' '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}'
+          exit 0
+        fi
+        if [ "$1 $2" = "auth login" ] && [ "$3" = "--claudeai" ]; then
+          : > "\(markerURL.path)"
+          exit 0
+        fi
+        exit 64
         """
+        let runtime = ClaudeCLIRuntime(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            argumentPrefix: ["-c", script, "claude-test"]
+        )
+        let client = ClaudeCLIClient(runtimeLocator: FixedClaudeRuntimeLocator(value: runtime))
 
-        return Data("""
-        {
-          "five_hour": {
-            "utilization": 11,
-            "resets_at": "\(sessionReset)"\(nestedExtra)
-          },
-          "seven_day": {
-            "utilization": 22,
-            "resets_at": "2026-07-18T15:00:00Z"\(nestedExtra)
-          },
-          "limits": [
+        let status = try await client.authenticationStatus()
+        try await client.startClaudeAIAuthentication()
+
+        XCTAssertTrue(status.usesClaudeAIAuthentication)
+        XCTAssertEqual(status.subscriptionType, "max")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: markerURL.path))
+    }
+
+    func testStatusLineBridgePersistsOnlyRateLimitsWithRestrictivePermissions() throws {
+        let root = temporaryDirectory().appendingPathComponent("state", isDirectory: true)
+        let input = Data(
+            """
             {
-              "utilization": 33,
-              "resets_at": "2026-07-18T16:00:00Z",
-              "scope": { "model": { "display_name": "Fable"\(nestedExtra) } }
-            },
-            {
-              "utilization": 44,
-              "resets_at": "2026-07-18T17:00:00Z",
-              "scope": { "model": { "display_name": "Sonnet"\(nestedExtra) } }
-            }\(haikuLimit),
-            {
-              "utilization": 99,
-              "resets_at": "2026-07-18T19:00:00Z",
-              "scope": { "model": { "display_name": "Opus"\(nestedExtra) } }
+              "session_id": "session-test",
+              "email": "private@example.com",
+              "access_token": "fake-access-token-value",
+              "rate_limits": {
+                "five_hour": {"used_percentage": 8, "resets_at": 1783782000},
+                "seven_day": {"used_percentage": 34, "resets_at": 1784419200},
+                "unknown_future_window": {"used_percentage": 2, "resets_at": 1785000000}
+              }
             }
-          ]\(topLevelExtra)
-        }
-        """.utf8)
+            """.utf8
+        )
+
+        try ClaudeUsageCacheStore.writeStatusLineInput(
+            input,
+            rootProvider: FixedStorageRootProvider(storageRoot: root),
+            now: checkedAt
+        )
+
+        let cacheURL = root.appendingPathComponent(ClaudeUsageCacheStore.cacheFileName)
+        let persisted = try Data(contentsOf: cacheURL)
+        let text = try XCTUnwrap(String(data: persisted, encoding: .utf8))
+        let cache = try JSONDecoder().decode(ClaudeUsageCache.self, from: persisted)
+        XCTAssertEqual(cache.fiveHour?.usedPercentage, 8)
+        XCTAssertEqual(cache.sevenDay?.usedPercentage, 34)
+        XCTAssertFalse(text.contains("private@example.com"))
+        XCTAssertFalse(text.contains("fake-access-token-value"))
+        XCTAssertFalse(text.contains("session-test"))
+        XCTAssertEqual(try LocalPersistence.permissions(of: root), 0o700)
+        XCTAssertEqual(try LocalPersistence.permissions(of: cacheURL), 0o600)
     }
 
-    // Sanitized fixture derived from a real live `oauth/usage` response: limits
-    // report integer `percent` (not `utilization`), carry `kind`/`group`/
-    // `severity`/`is_active` fields, set `scope: null` on non-model limits, and
-    // include only the single active model-scoped weekly limit (Fable). No
-    // verbatim identifiers — rounded percentages and generic timestamps only.
-    private func liveShapeUsageJSON(includeUnknownModel: Bool = false) -> Data {
-        let unknownModelLimit = includeUnknownModel ? """
-        ,{
-          "kind": "weekly_scoped",
-          "group": "weekly",
-          "percent": 40,
-          "severity": "normal",
-          "resets_at": "2026-07-12T00:00:00Z",
-          "scope": { "model": { "id": null, "display_name": "Mystery" }, "surface": null },
-          "is_active": false
-        }
-        """ : ""
+    func testStatusLineBridgeCommandForwardsInputWithoutPersistingSecrets() throws {
+        let root = temporaryDirectory().appendingPathComponent("state", isDirectory: true)
+        let inputPipe = Pipe()
+        let outputPipe = Pipe()
+        let rawInput = Data(
+            """
+            {"access_token":"do-not-persist","rate_limits":{"five_hour":{"used_percentage":9,"resets_at":1783782000}}}
+            """.utf8
+        )
+        inputPipe.fileHandleForWriting.write(rawInput)
+        inputPipe.fileHandleForWriting.closeFile()
 
-        return Data("""
-        {
-          "five_hour": {
-            "utilization": 16.0,
-            "resets_at": "2026-07-12T02:00:00.608522+00:00",
-            "limit_dollars": null,
-            "used_dollars": null,
-            "remaining_dollars": null
-          },
-          "seven_day": {
-            "utilization": 71.0,
-            "resets_at": "2026-07-11T23:59:59.608543+00:00",
-            "limit_dollars": null,
-            "used_dollars": null,
-            "remaining_dollars": null
-          },
-          "seven_day_opus": null,
-          "seven_day_sonnet": null,
-          "extra_usage": { "is_enabled": false, "utilization": null },
-          "limits": [
-            {
-              "kind": "session",
-              "group": "session",
-              "percent": 16,
-              "severity": "normal",
-              "resets_at": "2026-07-12T02:00:00.608522+00:00",
-              "scope": null,
-              "is_active": false
-            },
-            {
-              "kind": "weekly_all",
-              "group": "weekly",
-              "percent": 71,
-              "severity": "normal",
-              "resets_at": "2026-07-11T23:59:59.608543+00:00",
-              "scope": null,
-              "is_active": false
-            },
-            {
-              "kind": "weekly_scoped",
-              "group": "weekly",
-              "percent": 93,
-              "severity": "critical",
-              "resets_at": "2026-07-12T00:00:00.608792+00:00",
-              "scope": { "model": { "id": null, "display_name": "Fable" }, "surface": null },
-              "is_active": true
-            }\(unknownModelLimit)
-          ],
-          "spend": { "percent": 0, "enabled": false },
-          "member_dashboard_available": false
-        }
-        """.utf8)
+        let status = ClaudeStatusLineBridgeCommand.run(
+            input: inputPipe.fileHandleForReading,
+            output: outputPipe.fileHandleForWriting,
+            forwardsInput: true,
+            rootProvider: FixedStorageRootProvider(storageRoot: root)
+        )
+        outputPipe.fileHandleForWriting.closeFile()
+        let forwardedInput = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let persisted = try Data(contentsOf: root.appendingPathComponent(ClaudeUsageCacheStore.cacheFileName))
+
+        XCTAssertEqual(status, 0)
+        XCTAssertEqual(forwardedInput, rawInput)
+        XCTAssertFalse(String(decoding: persisted, as: UTF8.self).contains("do-not-persist"))
     }
 
-    private func date(_ rawValue: String) -> Date {
-        ProviderJSON.parseISO8601(rawValue)!
+    func testStatusLineBridgeReadsDelayedPipeChunksThroughEOF() throws {
+        let root = temporaryDirectory().appendingPathComponent("state", isDirectory: true)
+        let inputPipe = Pipe()
+        let outputPipe = Pipe()
+        let firstChunk = Data(
+            "{\"rate_limits\":{\"five_hour\":{\"used_percentage\":9,".utf8
+        )
+        let secondChunk = Data(
+            "\"resets_at\":1783782000}}}".utf8
+        )
+        let rawInput = firstChunk + secondChunk
+        let writer = inputPipe.fileHandleForWriting
+        DispatchQueue.global().async {
+            writer.write(firstChunk)
+            usleep(25_000)
+            writer.write(secondChunk)
+            writer.closeFile()
+        }
+
+        let status = ClaudeStatusLineBridgeCommand.run(
+            input: inputPipe.fileHandleForReading,
+            output: outputPipe.fileHandleForWriting,
+            forwardsInput: true,
+            rootProvider: FixedStorageRootProvider(storageRoot: root)
+        )
+        outputPipe.fileHandleForWriting.closeFile()
+        let forwardedInput = outputPipe.fileHandleForReading.readDataToEndOfFile()
+
+        XCTAssertEqual(status, 0)
+        XCTAssertEqual(forwardedInput, rawInput)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: root.appendingPathComponent(ClaudeUsageCacheStore.cacheFileName).path
+        ))
+    }
+
+    func testStatusLineBridgeRejectsOversizedInputWithoutWritingCache() throws {
+        let root = temporaryDirectory().appendingPathComponent("state", isDirectory: true)
+        let inputDirectory = temporaryDirectory()
+        try FileManager.default.createDirectory(
+            at: inputDirectory,
+            withIntermediateDirectories: true
+        )
+        let inputURL = inputDirectory.appendingPathComponent("oversized-statusline.json")
+        try Data(
+            repeating: 0x41,
+            count: ClaudeStatusLineBridgeCommand.maximumInputBytes + 1
+        ).write(to: inputURL)
+        let input = try FileHandle(forReadingFrom: inputURL)
+        defer { try? input.close() }
+
+        let status = ClaudeStatusLineBridgeCommand.run(
+            input: input,
+            output: FileHandle.nullDevice,
+            rootProvider: FixedStorageRootProvider(storageRoot: root)
+        )
+
+        XCTAssertEqual(status, 1)
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: root.appendingPathComponent(ClaudeUsageCacheStore.cacheFileName).path
+        ))
+    }
+
+    func testCacheReaderRejectsBroadenedPermissionsAndWriterRepairsThem() async throws {
+        let root = temporaryDirectory().appendingPathComponent("state", isDirectory: true)
+        let rootProvider = FixedStorageRootProvider(storageRoot: root)
+        let input = Data(
+            """
+            {"rate_limits":{"five_hour":{"used_percentage":8,"resets_at":1783782000}}}
+            """.utf8
+        )
+        try ClaudeUsageCacheStore.writeStatusLineInput(input, rootProvider: rootProvider, now: checkedAt)
+        let cacheURL = root.appendingPathComponent(ClaudeUsageCacheStore.cacheFileName)
+        XCTAssertEqual(chmod(cacheURL.path, 0o644), 0)
+        let store = ClaudeUsageCacheStore(rootProvider: rootProvider)
+
+        do {
+            _ = try await store.readUsageCache()
+            XCTFail("Expected insecure cache permissions to be rejected")
+        } catch let failure as ProviderClientFailure {
+            XCTAssertEqual(failure, .credentialInsecure(provider: .claude))
+        }
+
+        try ClaudeUsageCacheStore.writeStatusLineInput(input, rootProvider: rootProvider, now: checkedAt)
+        XCTAssertEqual(try LocalPersistence.permissions(of: cacheURL), 0o600)
+        XCTAssertEqual(try LocalPersistence.permissions(of: root), 0o700)
+    }
+
+    func testInstallerPreservesUnknownSettingsAndExistingStatusLineCommand() async throws {
+        let temporaryRoot = temporaryDirectory()
+        let settingsDirectory = temporaryRoot.appendingPathComponent("claude", isDirectory: true)
+        try FileManager.default.createDirectory(at: settingsDirectory, withIntermediateDirectories: true)
+        let settingsURL = settingsDirectory.appendingPathComponent("settings.json")
+        let existingSettings: [String: Any] = [
+            "theme": "dark",
+            "futureField": ["enabled": true],
+            "statusLine": [
+                "type": "command",
+                "command": "printf existing",
+                "padding": 3
+            ]
+        ]
+        try JSONSerialization.data(withJSONObject: existingSettings).write(to: settingsURL)
+        let stateRoot = temporaryRoot.appendingPathComponent("state", isDirectory: true)
+        let installer = ClaudeStatusLineInstaller(
+            settingsURL: settingsURL,
+            rootProvider: FixedStorageRootProvider(storageRoot: stateRoot),
+            executableURL: URL(fileURLWithPath: "/Applications/AI Usage Monitor.app/Contents/MacOS/AI Usage Monitor")
+        )
+
+        try await installer.install()
+
+        let updated = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: settingsURL)) as? [String: Any]
+        )
+        let statusLine = try XCTUnwrap(updated["statusLine"] as? [String: Any])
+        let isInstalled = await installer.isInstalled()
+        XCTAssertEqual(updated["theme"] as? String, "dark")
+        XCTAssertNotNil(updated["futureField"])
+        XCTAssertEqual(statusLine["padding"] as? Int, 3)
+        let installedCommand = try XCTUnwrap(statusLine["command"] as? String)
+        XCTAssertTrue(installedCommand.contains("--claude-statusline --forward-statusline-input"))
+        XCTAssertTrue(installedCommand.contains("printf existing"))
+        XCTAssertEqual(installedCommand.components(separatedBy: "printf existing").count - 1, 1)
+        XCTAssertTrue(isInstalled)
+        XCTAssertEqual(try LocalPersistence.permissions(of: settingsURL), 0o600)
+    }
+
+    func testInstallerDoesNotAcceptAnotherExecutableOrSubstringAsInstalled() async throws {
+        let temporaryRoot = temporaryDirectory()
+        let settingsDirectory = temporaryRoot.appendingPathComponent("claude", isDirectory: true)
+        try FileManager.default.createDirectory(at: settingsDirectory, withIntermediateDirectories: true)
+        let settingsURL = settingsDirectory.appendingPathComponent("settings.json")
+        let staleSettings: [String: Any] = [
+            "statusLine": [
+                "type": "command",
+                "command": "'/Volumes/Old/AI Usage Monitor' --claude-statusline --forward-statusline-input | ( printf preserved )"
+            ]
+        ]
+        try JSONSerialization.data(withJSONObject: staleSettings).write(to: settingsURL)
+        let stateRoot = temporaryRoot.appendingPathComponent("state", isDirectory: true)
+        let installer = ClaudeStatusLineInstaller(
+            settingsURL: settingsURL,
+            rootProvider: FixedStorageRootProvider(storageRoot: stateRoot),
+            executableURL: URL(fileURLWithPath: "/Applications/AI Usage Monitor.app/Contents/MacOS/AI Usage Monitor")
+        )
+
+        let wasInstalled = await installer.isInstalled()
+        XCTAssertFalse(wasInstalled)
+        try await installer.install()
+
+        let updated = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: settingsURL)) as? [String: Any]
+        )
+        let statusLine = try XCTUnwrap(updated["statusLine"] as? [String: Any])
+        let command = try XCTUnwrap(statusLine["command"] as? String)
+        let isInstalled = await installer.isInstalled()
+        XCTAssertTrue(isInstalled)
+        XCTAssertFalse(command.contains("/Volumes/Old"))
+        XCTAssertTrue(command.contains("printf preserved"))
+    }
+
+    func testInstallerMigratesAndDeletesLegacyCommandCopy() async throws {
+        let temporaryRoot = temporaryDirectory()
+        let settingsDirectory = temporaryRoot.appendingPathComponent("claude", isDirectory: true)
+        let stateRoot = temporaryRoot.appendingPathComponent("state", isDirectory: true)
+        try FileManager.default.createDirectory(at: settingsDirectory, withIntermediateDirectories: true)
+        try LocalPersistence.ensureRoot(at: stateRoot)
+        let settingsURL = settingsDirectory.appendingPathComponent("settings.json")
+        try JSONSerialization.data(withJSONObject: [
+            "statusLine": [
+                "type": "command",
+                "command": "'/Volumes/Old/AI Usage Monitor' --claude-statusline"
+            ]
+        ]).write(to: settingsURL)
+        let legacyURL = stateRoot.appendingPathComponent(ClaudeStatusLineInstaller.legacyConfigurationFileName)
+        try LocalPersistence.atomicWrite(
+            try JSONSerialization.data(withJSONObject: ["previousCommand": "printf legacy-preserved"]),
+            to: legacyURL
+        )
+        let installer = ClaudeStatusLineInstaller(
+            settingsURL: settingsURL,
+            rootProvider: FixedStorageRootProvider(storageRoot: stateRoot),
+            executableURL: URL(fileURLWithPath: "/Applications/AI Usage Monitor.app/Contents/MacOS/AI Usage Monitor")
+        )
+
+        try await installer.install()
+
+        let updated = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: settingsURL)) as? [String: Any]
+        )
+        let statusLine = try XCTUnwrap(updated["statusLine"] as? [String: Any])
+        let command = try XCTUnwrap(statusLine["command"] as? String)
+        XCTAssertTrue(command.contains("printf legacy-preserved"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacyURL.path))
+    }
+
+    func testInstallerMigratesLegacyCommandIntoCurrentBareBridge() async throws {
+        let temporaryRoot = temporaryDirectory()
+        let settingsDirectory = temporaryRoot.appendingPathComponent("claude", isDirectory: true)
+        let stateRoot = temporaryRoot.appendingPathComponent("state", isDirectory: true)
+        try FileManager.default.createDirectory(at: settingsDirectory, withIntermediateDirectories: true)
+        try LocalPersistence.ensureRoot(at: stateRoot)
+        let settingsURL = settingsDirectory.appendingPathComponent("settings.json")
+        let executableURL = URL(
+            fileURLWithPath: "/Applications/AI Usage Monitor.app/Contents/MacOS/AI Usage Monitor"
+        )
+        try JSONSerialization.data(withJSONObject: [
+            "statusLine": [
+                "type": "command",
+                "command": "'\(executableURL.path)' --claude-statusline"
+            ]
+        ]).write(to: settingsURL)
+        let legacyURL = stateRoot.appendingPathComponent(ClaudeStatusLineInstaller.legacyConfigurationFileName)
+        try LocalPersistence.atomicWrite(
+            try JSONSerialization.data(withJSONObject: ["previousCommand": "printf same-path-preserved"]),
+            to: legacyURL
+        )
+        let installer = ClaudeStatusLineInstaller(
+            settingsURL: settingsURL,
+            rootProvider: FixedStorageRootProvider(storageRoot: stateRoot),
+            executableURL: executableURL
+        )
+
+        try await installer.install()
+
+        let updated = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: settingsURL)) as? [String: Any]
+        )
+        let statusLine = try XCTUnwrap(updated["statusLine"] as? [String: Any])
+        let command = try XCTUnwrap(statusLine["command"] as? String)
+        XCTAssertTrue(command.contains("--forward-statusline-input"))
+        XCTAssertTrue(command.contains("printf same-path-preserved"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacyURL.path))
+    }
+
+    func testRuntimeLocatorFindsHomebrewClaudeWithoutFinderPath() throws {
+        let runtime = try XCTUnwrap(ClaudeCLIRuntimeLocator(
+            candidateExecutablePaths: ["/missing/claude", "/opt/homebrew/bin/claude"],
+            isExecutable: { $0 == "/opt/homebrew/bin/claude" },
+            isTrustedExecutable: { _ in true }
+        ).runtime())
+
+        XCTAssertEqual(
+            runtime.executableURL,
+            URL(fileURLWithPath: "/opt/homebrew/bin/claude").resolvingSymlinksInPath()
+        )
+        XCTAssertEqual(runtime.argumentPrefix, [])
+    }
+
+    func testRuntimeLocatorRejectsUnsignedClaudeImpersonator() {
+        let runtime = ClaudeCLIRuntimeLocator(
+            candidateExecutablePaths: ["/tmp/claude"],
+            isExecutable: { _ in true },
+            isTrustedExecutable: { _ in false }
+        ).runtime()
+
+        XCTAssertNil(runtime)
+    }
+
+    private var loggedInStatus: ClaudeAuthenticationStatus {
+        ClaudeAuthenticationStatus(loggedIn: true, authMethod: "claude.ai", subscriptionType: "max")
+    }
+
+    private func temporaryDirectory() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     }
 }
 
-private actor FakeClaudeCredentialReader: ClaudeCredentialReading {
-    private let result: Result<Data, Error>
-    private(set) var readCount = 0
+private actor StubClaudeCLI: ClaudeCLICommunicating {
+    private var statuses: [ClaudeAuthenticationStatus]
+    private var loginStarts = 0
 
-    init(data: Data) {
-        self.result = .success(data)
+    init(statuses: [ClaudeAuthenticationStatus]) {
+        self.statuses = statuses
     }
 
-    init(error: Error) {
-        self.result = .failure(error)
-    }
-
-    func credentialData() async throws -> Data {
-        readCount += 1
-        return try result.get()
-    }
-}
-
-private actor FakeProviderHTTPTransport: ProviderHTTPTransporting {
-    private(set) var requests: [ProviderHTTPRequest] = []
-    private var responses: [Result<ProviderHTTPResponse, Error>]
-
-    init(responses: [Result<ProviderHTTPResponse, Error>]) {
-        self.responses = responses
-    }
-
-    func send(_ request: ProviderHTTPRequest) async throws -> ProviderHTTPResponse {
-        requests.append(request)
-        guard !responses.isEmpty else {
-            throw URLError(.badServerResponse)
+    func authenticationStatus() async throws -> ClaudeAuthenticationStatus {
+        guard !statuses.isEmpty else {
+            throw ClaudeCLIFailure.malformedStatus
         }
-        return try responses.removeFirst().get()
-    }
-}
-
-private struct SecretTransportError: LocalizedError {
-    var errorDescription: String? {
-        "transport leaked fake-claude-access-token"
-    }
-}
-
-private struct SecretCredentialError: LocalizedError {
-    var errorDescription: String? {
-        "credential reader leaked fake-claude-access-token"
-    }
-}
-
-private extension Optional {
-    func unwrap(file: StaticString = #filePath, line: UInt = #line) throws -> Wrapped {
-        guard let value = self else {
-            XCTFail("Expected optional value.", file: file, line: line)
-            throw XCTSkip("Expected optional value.")
+        if statuses.count == 1 {
+            return statuses[0]
         }
-        return value
+        return statuses.removeFirst()
+    }
+
+    func startClaudeAIAuthentication() async throws {
+        loginStarts += 1
+    }
+
+    func loginStartCount() -> Int {
+        loginStarts
+    }
+}
+
+private struct FixedClaudeRuntimeLocator: ClaudeCLIRuntimeLocating {
+    let value: ClaudeCLIRuntime
+
+    func runtime() -> ClaudeCLIRuntime? {
+        value
+    }
+}
+
+private actor StubClaudeUsageCache: ClaudeUsageCacheReading {
+    private var cache: ClaudeUsageCache?
+    private var invalidations = 0
+
+    init(cache: ClaudeUsageCache?) {
+        self.cache = cache
+    }
+
+    func readUsageCache() async throws -> ClaudeUsageCache? {
+        cache
+    }
+
+    func invalidateUsageCache() async throws {
+        invalidations += 1
+        cache = nil
+    }
+
+    func invalidationCount() -> Int {
+        invalidations
+    }
+}
+
+private actor StubClaudeStatusLineInstaller: ClaudeStatusLineInstalling {
+    private var installed: Bool
+
+    init(installed: Bool) {
+        self.installed = installed
+    }
+
+    func isInstalled() async -> Bool {
+        installed
+    }
+
+    func install() async throws {
+        installed = true
     }
 }

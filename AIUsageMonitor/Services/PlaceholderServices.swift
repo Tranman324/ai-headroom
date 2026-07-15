@@ -1,6 +1,6 @@
 import Foundation
 
-struct PlaceholderProviderClient: UsageProviderFetching {
+struct UnavailableProviderClient: UsageProviderFetching {
     let provider: ProviderID
 
     func fetchUsageSnapshot() async throws -> ProviderUsageSnapshot {
@@ -8,7 +8,11 @@ struct PlaceholderProviderClient: UsageProviderFetching {
     }
 }
 
-struct FixtureProviderClient: UsageProviderFetching {
+struct NoopExternalURLOpener: ExternalURLOpening {
+    func open(_ url: URL) async {}
+}
+
+struct FixtureProviderClient: UsageProviderFetching, ProviderConnectionChecking {
     let snapshot: ProviderUsageSnapshot
 
     var provider: ProviderID {
@@ -17,6 +21,16 @@ struct FixtureProviderClient: UsageProviderFetching {
 
     func fetchUsageSnapshot() async throws -> ProviderUsageSnapshot {
         snapshot
+    }
+
+    func connectionStatus() async -> ProviderConnectionStatus {
+        ProviderConnectionStatus(
+            provider: provider,
+            state: snapshot.meters.isEmpty ? .disconnected : .connected,
+            planName: snapshot.meters.first?.display.planName,
+            usageSyncEnabled: !snapshot.meters.isEmpty,
+            detail: snapshot.meters.isEmpty ? "Not connected" : "Usage sync enabled"
+        )
     }
 }
 

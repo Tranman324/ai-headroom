@@ -2,6 +2,8 @@ import Foundation
 
 struct AppDependencies: Sendable {
     private var providersByID: [ProviderID: any UsageProviderFetching]
+    private var authenticationByID: [ProviderID: any ProviderAuthenticationManaging]
+    private var connectionCheckingByID: [ProviderID: any ProviderConnectionChecking]
 
     var historyStore: any HistoryStoring
     var settingsStore: any SettingsStoring
@@ -9,6 +11,7 @@ struct AppDependencies: Sendable {
     var connectivityMonitor: any ConnectivityMonitoring
     var lifecycleEvents: any AppLifecycleEventProviding
     var loginRegistration: any LoginRegistering
+    var externalURLOpener: any ExternalURLOpening
 
     init(
         providers: [any UsageProviderFetching],
@@ -17,15 +20,33 @@ struct AppDependencies: Sendable {
         clock: any ClockProviding,
         connectivityMonitor: any ConnectivityMonitoring,
         lifecycleEvents: any AppLifecycleEventProviding,
-        loginRegistration: any LoginRegistering
+        loginRegistration: any LoginRegistering,
+        externalURLOpener: any ExternalURLOpening
     ) {
         self.providersByID = Dictionary(uniqueKeysWithValues: providers.map { ($0.provider, $0) })
+        self.authenticationByID = Dictionary(
+            uniqueKeysWithValues: providers.compactMap { provider in
+                guard let authentication = provider as? any ProviderAuthenticationManaging else {
+                    return nil
+                }
+                return (authentication.provider, authentication)
+            }
+        )
+        self.connectionCheckingByID = Dictionary(
+            uniqueKeysWithValues: providers.compactMap { provider in
+                guard let connectionChecking = provider as? any ProviderConnectionChecking else {
+                    return nil
+                }
+                return (connectionChecking.provider, connectionChecking)
+            }
+        )
         self.historyStore = historyStore
         self.settingsStore = settingsStore
         self.clock = clock
         self.connectivityMonitor = connectivityMonitor
         self.lifecycleEvents = lifecycleEvents
         self.loginRegistration = loginRegistration
+        self.externalURLOpener = externalURLOpener
     }
 
     var configuredProviders: [ProviderID] {
@@ -34,6 +55,14 @@ struct AppDependencies: Sendable {
 
     func providerClient(for provider: ProviderID) -> (any UsageProviderFetching)? {
         providersByID[provider]
+    }
+
+    func providerAuthentication(for provider: ProviderID) -> (any ProviderAuthenticationManaging)? {
+        authenticationByID[provider]
+    }
+
+    func providerConnectionChecking(for provider: ProviderID) -> (any ProviderConnectionChecking)? {
+        connectionCheckingByID[provider]
     }
 
     func fetchAllProviderSnapshots(previousSnapshot: CombinedUsageSnapshot? = nil) async -> CombinedUsageSnapshot {

@@ -12,7 +12,8 @@ enum AppCompositionRoot {
             clock: SystemClock(),
             connectivityMonitor: NetworkPathConnectivityMonitor(),
             lifecycleEvents: WorkspaceLifecycleEvents(),
-            loginRegistration: ServiceManagementLoginRegistration()
+            loginRegistration: ServiceManagementLoginRegistration(),
+            externalURLOpener: WorkspaceExternalURLOpener()
         )
     }
 
@@ -35,7 +36,8 @@ enum AppCompositionRoot {
             clock: FixedClock(now: snapshot.capturedAt),
             connectivityMonitor: StaticConnectivityMonitor(state: .online),
             lifecycleEvents: NoopLifecycleEvents(),
-            loginRegistration: UnsupportedLoginRegistration()
+            loginRegistration: UnsupportedLoginRegistration(),
+            externalURLOpener: NoopExternalURLOpener()
         )
     }
 }

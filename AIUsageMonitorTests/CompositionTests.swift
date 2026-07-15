@@ -102,11 +102,14 @@ final class CompositionTests: XCTestCase {
         XCTAssertEqual(snapshot.hottestBand, .critical)
     }
 
-    func testProductionCompositionInstallsProviderClientsWithoutFetchingCredentials() {
+    func testProductionCompositionUsesProviderOwnedAuthenticationForClaude() throws {
         let dependencies = AppCompositionRoot.production()
+        let claude = try XCTUnwrap(dependencies.providerClient(for: .claude))
 
         XCTAssertEqual(dependencies.configuredProviders, [.claude, .codex])
-        XCTAssertNotNil(dependencies.providerClient(for: .claude))
+        XCTAssertTrue(claude is ClaudeUsageProvider)
+        XCTAssertNotNil(dependencies.providerAuthentication(for: .claude))
+        XCTAssertNotNil(dependencies.providerConnectionChecking(for: .claude))
         XCTAssertNotNil(dependencies.providerClient(for: .codex))
     }
 

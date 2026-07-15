@@ -732,7 +732,8 @@ final class UsagePollingCoordinatorTests: XCTestCase {
                 clock: clock,
                 connectivityMonitor: connectivityMonitor,
                 lifecycleEvents: lifecycleEvents,
-                loginRegistration: loginRegistration
+                loginRegistration: loginRegistration,
+                externalURLOpener: NoopExternalURLOpener()
             ),
             initialSnapshot: initialSnapshot
         )

@@ -16,6 +16,7 @@ enum UsageFixtureScenario: String, CaseIterable, Sendable {
     case rangeThreeDays = "range-3d"
     case rangeSevenDays = "range-7d"
     case settings
+    case providerConnections = "provider-connections"
     case noHistory = "no-history"
 
     var snapshot: CombinedUsageSnapshot {
@@ -38,7 +39,7 @@ enum UsageFixtureScenario: String, CaseIterable, Sendable {
             return UsageMonitorFixtures.safeProjectionSnapshot
         case .insufficientBurn, .noHistory:
             return UsageMonitorFixtures.normalSnapshot
-        case .settings:
+        case .settings, .providerConnections:
             return UsageMonitorFixtures.settingsSnapshot
         }
     }
@@ -53,14 +54,14 @@ enum UsageFixtureScenario: String, CaseIterable, Sendable {
             return UsageMonitorFixtures.safeProjectionHistory
         case .insufficientBurn:
             return UsageMonitorFixtures.insufficientBurnHistory
-        case .normal, .warning, .critical, .stale, .error, .expandedHistory, .settings:
+        case .normal, .warning, .critical, .stale, .error, .expandedHistory, .settings, .providerConnections:
             return UsageMonitorFixtures.expandedHistorySnapshots
         }
     }
 
     var monitorSettings: MonitorSettings {
         switch self {
-        case .settings:
+        case .settings, .providerConnections:
             return UsageMonitorFixtures.settingsFixtureSettings
         case .normal, .warning, .critical, .stale, .error, .noData, .expandedHistory, .preResetExhaustion, .safeProjection, .insufficientBurn, .rangeTwentyFourHours, .rangeThreeDays, .rangeSevenDays, .noHistory:
             return .defaults
@@ -87,6 +88,8 @@ enum UsageFixtureScenario: String, CaseIterable, Sendable {
             return AppNavigationState(meterRoute: .detail(.claudeWeekFable), detailRange: .sevenDays)
         case .settings:
             return AppNavigationState(isSettingsPresented: true)
+        case .providerConnections:
+            return AppNavigationState(isSettingsPresented: true, isProviderConnectionsPresented: true)
         case .expandedHistory, .noHistory:
             return AppNavigationState(isHistoryExpanded: true)
         case .normal, .warning, .critical, .stale, .error, .noData:
@@ -413,7 +416,7 @@ private enum FixtureEvidenceWriter {
 
     private static func navigationState(_ navigation: AppNavigationState) -> String {
         if navigation.isSettingsPresented {
-            return "settings"
+            return navigation.isProviderConnectionsPresented ? "connections" : "settings"
         }
 
         switch navigation.meterRoute {

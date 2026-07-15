@@ -5,6 +5,67 @@ protocol UsageProviderFetching: Sendable {
     func fetchUsageSnapshot() async throws -> ProviderUsageSnapshot
 }
 
+struct ProviderAuthenticationChallenge: Equatable, Sendable {
+    var provider: ProviderID
+    var authorizationURL: URL
+    var userCode: String?
+}
+
+enum ProviderAuthenticationResult: Equatable, Sendable {
+    case challenge(ProviderAuthenticationChallenge)
+    case completed
+}
+
+protocol ProviderAuthenticationManaging: Sendable {
+    var provider: ProviderID { get }
+    func startAuthentication() async throws -> ProviderAuthenticationResult
+}
+
+enum ProviderConnectionState: Equatable, Sendable {
+    case unknown
+    case checking
+    case disconnected
+    case connected
+    case unavailable
+}
+
+struct ProviderConnectionStatus: Equatable, Sendable {
+    var provider: ProviderID
+    var state: ProviderConnectionState
+    var planName: String?
+    var usageSyncEnabled: Bool?
+    var detail: String?
+
+    static func unknown(_ provider: ProviderID) -> ProviderConnectionStatus {
+        ProviderConnectionStatus(
+            provider: provider,
+            state: .unknown,
+            planName: nil,
+            usageSyncEnabled: nil,
+            detail: nil
+        )
+    }
+
+    static func checking(_ provider: ProviderID) -> ProviderConnectionStatus {
+        ProviderConnectionStatus(
+            provider: provider,
+            state: .checking,
+            planName: nil,
+            usageSyncEnabled: nil,
+            detail: nil
+        )
+    }
+}
+
+protocol ProviderConnectionChecking: Sendable {
+    var provider: ProviderID { get }
+    func connectionStatus() async -> ProviderConnectionStatus
+}
+
+protocol ExternalURLOpening: Sendable {
+    func open(_ url: URL) async
+}
+
 protocol HistoryStoring: Sendable {
     func append(_ snapshot: CombinedUsageSnapshot) async throws
     func appendProviderSnapshot(_ snapshot: ProviderUsageSnapshot, capturedAt: Date) async throws

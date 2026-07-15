@@ -53,6 +53,8 @@ enum ProviderClientFailure: Error, Equatable, LocalizedError, Sendable {
     case malformedCredential(provider: ProviderID)
     case missingCredentialValue(provider: ProviderID)
     case credentialPersistence(provider: ProviderID)
+    case authenticationRequired(provider: ProviderID)
+    case runtimeUnavailable(provider: ProviderID)
     case transport(provider: ProviderID)
     case unauthorized(provider: ProviderID)
     case rateLimited(provider: ProviderID)
@@ -68,6 +70,8 @@ enum ProviderClientFailure: Error, Equatable, LocalizedError, Sendable {
              let .malformedCredential(provider),
              let .missingCredentialValue(provider),
              let .credentialPersistence(provider),
+             let .authenticationRequired(provider),
+             let .runtimeUnavailable(provider),
              let .transport(provider),
              let .unauthorized(provider),
              let .rateLimited(provider),
@@ -80,11 +84,11 @@ enum ProviderClientFailure: Error, Equatable, LocalizedError, Sendable {
 
     var code: ProviderErrorCode {
         switch self {
-        case .credentialUnavailable, .credentialUnreadable, .credentialInsecure, .credentialPersistence, .transport, .httpStatus, .refreshFailed:
+        case .credentialUnavailable, .credentialUnreadable, .credentialInsecure, .credentialPersistence, .runtimeUnavailable, .transport, .httpStatus, .refreshFailed:
             return .unavailable
         case .malformedCredential, .missingCredentialValue, .malformedResponse:
             return .malformedResponse
-        case .unauthorized:
+        case .authenticationRequired, .unauthorized:
             return .unauthorized
         case .rateLimited:
             return .rateLimited
@@ -105,6 +109,10 @@ enum ProviderClientFailure: Error, Equatable, LocalizedError, Sendable {
             return "\(provider.displayName) credentials are missing required values."
         case let .credentialPersistence(provider):
             return "\(provider.displayName) credentials could not be updated."
+        case let .authenticationRequired(provider):
+            return "\(provider.displayName) authorization is required."
+        case let .runtimeUnavailable(provider):
+            return "\(provider.displayName) sign-in service is unavailable."
         case let .transport(provider):
             return "\(provider.displayName) usage service could not be reached."
         case let .unauthorized(provider):

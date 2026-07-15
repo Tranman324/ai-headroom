@@ -134,6 +134,23 @@ final class AIUsageMonitorUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["30 days"].exists)
         XCTAssertTrue(app.staticTexts["Disabled"].exists)
 
+        click(element(in: app, identifier: "settings-provider-connections-button"), in: app)
+        XCTAssertTrue(element(in: app, identifier: "provider-connections-screen").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["OpenAI Codex"].exists)
+        XCTAssertTrue(app.buttons["connect-codex-button"].exists)
+        XCTAssertTrue(app.staticTexts["Claude Max"].exists)
+        XCTAssertTrue(app.buttons["connect-claude-button"].exists)
+        XCTAssertFalse(app.staticTexts["Third-party sign-in unavailable"].exists)
+        let providerConnectionsScreenshot = XCTAttachment(
+            screenshot: element(in: app, identifier: "usage-popover-root").screenshot()
+        )
+        providerConnectionsScreenshot.name = "provider-connections-screen"
+        providerConnectionsScreenshot.lifetime = .keepAlways
+        add(providerConnectionsScreenshot)
+
+        click(element(in: app, identifier: "connections-back-button"), in: app)
+        XCTAssertTrue(element(in: app, identifier: "settings-screen").waitForExistence(timeout: 5))
+
         click(element(in: app, identifier: "settings-launch-at-login-toggle"), in: app)
         XCTAssertTrue(app.staticTexts["Enabled"].waitForExistence(timeout: 5))
 

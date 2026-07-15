@@ -25,17 +25,20 @@ enum MeterDetailRange: String, CaseIterable, Codable, Equatable, Sendable {
 struct AppNavigationState: Codable, Equatable, Sendable {
     var meterRoute: MeterDetailRoute
     var isSettingsPresented: Bool
+    var isProviderConnectionsPresented: Bool
     var isHistoryExpanded: Bool
     var detailRange: MeterDetailRange
 
     init(
         meterRoute: MeterDetailRoute = .list,
         isSettingsPresented: Bool = false,
+        isProviderConnectionsPresented: Bool = false,
         isHistoryExpanded: Bool = false,
         detailRange: MeterDetailRange = .sevenDays
     ) {
         self.meterRoute = meterRoute
         self.isSettingsPresented = isSettingsPresented
+        self.isProviderConnectionsPresented = isProviderConnectionsPresented
         self.isHistoryExpanded = isHistoryExpanded
         self.detailRange = detailRange
     }
@@ -45,6 +48,9 @@ enum AppIntentCommand: Codable, Equatable, Sendable {
     case refresh
     case openSettings
     case closeSettings
+    case openProviderConnections
+    case closeProviderConnections
+    case startProviderAuthentication(ProviderID)
     case showMeterDetail(MeterKind)
     case backFromMeterDetail
     case setMeterDetailRange(MeterDetailRange)

@@ -58,7 +58,17 @@ struct UsagePopoverView: View {
     @ViewBuilder
     private var content: some View {
         if store.navigation.isSettingsPresented {
-            SettingsPopoverScreen(settings: store.settings, run: run)
+            if store.navigation.isProviderConnectionsPresented {
+                ProviderConnectionsScreen(
+                    challenge: store.providerAuthenticationChallenge,
+                    connectionError: store.providerConnectionError,
+                    statuses: store.providerConnectionStatuses,
+                    authenticatingProviders: store.authenticatingProviders,
+                    run: run
+                )
+            } else {
+                SettingsPopoverScreen(settings: store.settings, run: run)
+            }
         } else {
             switch store.navigation.meterRoute {
             case .list:
@@ -71,7 +81,7 @@ struct UsagePopoverView: View {
 
     private var accessibilityState: String {
         if store.navigation.isSettingsPresented {
-            return "settings"
+            return store.navigation.isProviderConnectionsPresented ? "connections" : "settings"
         }
 
         switch store.navigation.meterRoute {
@@ -1153,6 +1163,29 @@ private struct SettingsPopoverScreen: View {
             }
             .settingsPanelStyle()
 
+            Button {
+                run(.openProviderConnections)
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "person.crop.circle.badge.checkmark")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(UsagePalette.codexAccent.swiftUIColor)
+                        .frame(width: 18, height: 18)
+                        .accessibilityHidden(true)
+                    Text("Provider connections")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+                        .accessibilityHidden(true)
+                }
+            }
+            .buttonStyle(.plain)
+            .settingsPanelStyle()
+            .accessibilityIdentifier("settings-provider-connections-button")
+
             Spacer(minLength: 0)
         }
         .accessibilityElement(children: .contain)
@@ -1179,6 +1212,183 @@ private struct SettingsPopoverScreen: View {
             return
         }
         run(.setHistoryRetention(retention))
+    }
+}
+
+private struct ProviderConnectionsScreen: View {
+    var challenge: ProviderAuthenticationChallenge?
+    var connectionError: SanitizedProviderError?
+    var statuses: [ProviderID: ProviderConnectionStatus]
+    var authenticatingProviders: Set<ProviderID>
+    var run: (AppIntentCommand) -> Void
+
+    private var codexUserCode: String? {
+        guard challenge?.provider == .codex else {
+            return nil
+        }
+        return challenge?.userCode
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                Button {
+                    run(.closeProviderConnections)
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back to settings")
+                .accessibilityIdentifier("connections-back-button")
+
+                Text("Connections")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
+
+                Spacer()
+            }
+            .frame(height: 28)
+
+            connectionPanel(
+                title: "OpenAI Codex",
+                status: codexUserCode == nil ? statusText(for: .codex) : "Complete sign-in in browser",
+                accent: UsagePalette.codexAccent.swiftUIColor,
+                actionTitle: actionTitle(for: .codex),
+                action: {
+                    run(.startProviderAuthentication(.codex))
+                }
+            ) {
+                if let codexUserCode {
+                    Text(codexUserCode)
+                        .font(.system(size: 18, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("codex-device-code")
+                } else if let detail = statuses[.codex]?.detail {
+                    connectionDetail(detail, provider: .codex)
+                }
+            }
+
+            connectionPanel(
+                title: "Claude Max",
+                status: statusText(for: .claude),
+                accent: UsagePalette.claudeAccent.swiftUIColor,
+                actionTitle: actionTitle(for: .claude),
+                action: {
+                    run(.startProviderAuthentication(.claude))
+                }
+            ) {
+                if let detail = statuses[.claude]?.detail {
+                    connectionDetail(detail, provider: .claude)
+                }
+            }
+
+            if let connectionError {
+                Text(connectionError.displayMessage)
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(UsagePalette.critical.swiftUIColor)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("provider-connection-error")
+            }
+
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("provider-connections-screen")
+    }
+
+    private func statusText(for provider: ProviderID) -> String {
+        if authenticatingProviders.contains(provider) {
+            return "Connecting..."
+        }
+        let status = statuses[provider] ?? .unknown(provider)
+        switch status.state {
+        case .unknown, .checking:
+            return "Checking..."
+        case .disconnected:
+            return "Not connected"
+        case .connected:
+            if let planName = status.planName, !planName.isEmpty {
+                return "Connected - \(planName)"
+            }
+            return "Connected"
+        case .unavailable:
+            return "Unavailable"
+        }
+    }
+
+    private func actionTitle(for provider: ProviderID) -> String? {
+        guard !authenticatingProviders.contains(provider) else {
+            return nil
+        }
+        if provider == .codex, codexUserCode != nil {
+            return "Start again"
+        }
+        let status = statuses[provider] ?? .unknown(provider)
+        switch status.state {
+        case .unknown, .checking:
+            return nil
+        case .disconnected:
+            return "Connect"
+        case .connected:
+            if provider == .claude, status.usageSyncEnabled == false {
+                return "Enable"
+            }
+            return "Reconnect"
+        case .unavailable:
+            return nil
+        }
+    }
+
+    private func connectionDetail(_ detail: String, provider: ProviderID) -> some View {
+        Text(detail)
+            .font(.system(size: 10, weight: .regular))
+            .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+            .lineLimit(2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("\(provider.rawValue)-connection-detail")
+    }
+
+    @ViewBuilder
+    private func connectionPanel<Content: View>(
+        title: String,
+        status: String,
+        accent: Color,
+        actionTitle: String?,
+        action: @escaping () -> Void,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(accent)
+                    .frame(width: 7, height: 7)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
+                    Text(status)
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 4)
+                if let actionTitle {
+                    Button(actionTitle, action: action)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityIdentifier(title == "OpenAI Codex" ? "connect-codex-button" : "connect-claude-button")
+                }
+            }
+            content()
+        }
+        .settingsPanelStyle()
     }
 }
 
