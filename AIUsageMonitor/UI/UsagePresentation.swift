@@ -93,7 +93,7 @@ enum UsagePresentation {
 
     static func needleAngleDegrees(for utilization: Double) -> Double {
         let bounded = min(100, max(0, utilization))
-        return -115 + (bounded / 100) * 230
+        return -90 + (bounded / 100) * 180
     }
 
     static func barColor(for meter: UsageMeterSnapshot) -> NSColor {
@@ -114,8 +114,8 @@ enum UsagePresentation {
                 accessibilityLabel: "AI Usage no data",
                 utilization: nil,
                 band: .normal,
-                iconColor: NSColor.labelColor,
-                textColor: NSColor.labelColor.withAlphaComponent(0.85),
+                iconColor: UsagePalette.statusMutedText,
+                textColor: UsagePalette.statusMutedText,
                 backgroundColor: nil,
                 showsCriticalCapsule: false
             )
@@ -132,8 +132,8 @@ enum UsagePresentation {
                 accessibilityLabel: "AI Usage \(percentText), normal",
                 utilization: utilization,
                 band: band,
-                iconColor: NSColor.labelColor,
-                textColor: NSColor.labelColor.withAlphaComponent(0.9),
+                iconColor: UsagePalette.statusAccent,
+                textColor: UsagePalette.statusText,
                 backgroundColor: nil,
                 showsCriticalCapsule: false
             )
@@ -143,8 +143,8 @@ enum UsagePresentation {
                 accessibilityLabel: "AI Usage \(percentText), warning",
                 utilization: utilization,
                 band: band,
-                iconColor: UsagePalette.warning,
-                textColor: UsagePalette.warning,
+                iconColor: UsagePalette.statusWarning,
+                textColor: UsagePalette.statusWarning,
                 backgroundColor: nil,
                 showsCriticalCapsule: false
             )

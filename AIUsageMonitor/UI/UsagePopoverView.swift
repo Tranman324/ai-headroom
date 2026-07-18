@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 struct UsagePopoverConfiguration: Equatable, Sendable {
@@ -12,9 +13,66 @@ enum UsagePopoverHostFactory {
         store: UsageMonitorStore,
         configuration: UsagePopoverConfiguration
     ) -> NSHostingController<UsagePopoverView> {
-        let host = NSHostingController(rootView: UsagePopoverView(store: store, configuration: configuration))
-        host.sizingOptions = .preferredContentSize
-        return host
+        let controller = NSHostingController(
+            rootView: UsagePopoverView(store: store, configuration: configuration)
+        )
+        controller.sizingOptions = [.preferredContentSize]
+        controller.preferredContentSize = contentSize(for: controller)
+        return controller
+    }
+
+    static func contentSize(for controller: NSHostingController<UsagePopoverView>) -> NSSize {
+        let fittingSize = controller.sizeThatFits(in: NSSize(
+            width: UsagePopoverMetrics.contentWidth,
+            height: .greatestFiniteMagnitude
+        ))
+        return NSSize(
+            width: UsagePopoverMetrics.contentWidth,
+            height: ceil(fittingSize.height)
+        )
+    }
+}
+
+@MainActor
+final class UsagePopoverIntrinsicSizeObserver {
+    private let hostingController: NSHostingController<UsagePopoverView>
+    private let applyContentSize: (NSSize) -> Void
+    private var cancellable: AnyCancellable?
+    private var isResizeScheduled = false
+    private var lastAppliedSize: NSSize?
+
+    init(
+        store: UsageMonitorStore,
+        hostingController: NSHostingController<UsagePopoverView>,
+        applyContentSize: @escaping (NSSize) -> Void
+    ) {
+        self.hostingController = hostingController
+        self.applyContentSize = applyContentSize
+        cancellable = store.objectWillChange.sink { [weak self] _ in
+            self?.scheduleResize()
+        }
+        resizeNow()
+    }
+
+    func resizeNow() {
+        isResizeScheduled = false
+        let contentSize = UsagePopoverHostFactory.contentSize(for: hostingController)
+        guard contentSize != lastAppliedSize else {
+            return
+        }
+        lastAppliedSize = contentSize
+        hostingController.preferredContentSize = contentSize
+        applyContentSize(contentSize)
+    }
+
+    private func scheduleResize() {
+        guard !isResizeScheduled else {
+            return
+        }
+        isResizeScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            self?.resizeNow()
+        }
     }
 }
 
@@ -40,6 +98,7 @@ struct UsagePopoverView: View {
                 .accessibilityLabel(accessibilityState)
         }
         .frame(width: UsagePopoverMetrics.contentWidth)
+        .fixedSize(horizontal: false, vertical: true)
         .clipShape(RoundedRectangle(cornerRadius: UsagePopoverMetrics.cornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: UsagePopoverMetrics.cornerRadius, style: .continuous)
@@ -145,7 +204,6 @@ private struct UsageListScreen: View {
             ) {
                 run(.setHistoryExpanded(!store.navigation.isHistoryExpanded))
             }
-            Spacer(minLength: 0)
         }
     }
 
@@ -370,7 +428,6 @@ private struct UsageMeterRow: View {
 
                 UsageProgressBar(meter: meter, height: isModelRow ? UsagePopoverMetrics.modelBarHeight : UsagePopoverMetrics.primaryBarHeight)
             }
-            .padding(.leading, isModelRow ? 26 : 0)
             .frame(height: isModelRow ? UsagePopoverMetrics.modelRowHeight : UsagePopoverMetrics.primaryRowHeight)
             .contentShape(Rectangle())
         }
@@ -680,7 +737,6 @@ private struct MeterDetailScreen: View {
                 DetailTrendChart(presentation: presentation)
                     .frame(width: UsagePopoverMetrics.chartWidth, height: 118)
                 DetailStatsView(stats: presentation.stats)
-                Spacer(minLength: 0)
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("\(presentation.title) detail")
@@ -1064,10 +1120,8 @@ private struct MissingMeterDetail: View {
                 Spacer()
             }
 
-            Spacer()
             NoHistoryView(message: "\(kind.displayName) unavailable")
                 .frame(width: UsagePopoverMetrics.chartWidth, height: 44)
-            Spacer()
         }
     }
 }

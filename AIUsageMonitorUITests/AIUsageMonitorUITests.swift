@@ -54,6 +54,16 @@ final class AIUsageMonitorUITests: XCTestCase {
         XCTAssertGreaterThan(evidence.bitmap.pixelCount(near: TestPalette.codexAccent), 100)
     }
 
+    func testModelMeterBarAlignsWithPrimaryMeterBar() throws {
+        let app = launchInteractiveFixture(scenario: "critical", historyExpanded: false)
+        let primaryBar = element(in: app, identifier: "meter-bar-claudeSession")
+        let modelBar = element(in: app, identifier: "meter-bar-claudeWeekFable")
+
+        XCTAssertTrue(primaryBar.waitForExistence(timeout: 5))
+        XCTAssertTrue(modelBar.waitForExistence(timeout: 5))
+        XCTAssertEqual(modelBar.frame.minX, primaryBar.frame.minX, accuracy: 1)
+    }
+
     func testStaleFixtureRendersProviderLocalHealthAndNonblankPixels() throws {
         let evidence = try runFixture(scenario: "stale", historyExpanded: false)
 

@@ -128,6 +128,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private let popoverConfiguration: UsagePopoverConfiguration
     private let contextMenuPresenter: any StatusContextMenuPresenting
     private var cancellables: Set<AnyCancellable> = []
+    private var intrinsicSizeObserver: UsagePopoverIntrinsicSizeObserver?
 
     init(
         store: UsageMonitorStore,
@@ -213,10 +214,17 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private func configurePopover() {
         popover.behavior = .transient
         popover.animates = true
-        popover.contentViewController = UsagePopoverHostFactory.makeHostingController(
+        let hostingController = UsagePopoverHostFactory.makeHostingController(
             store: store,
             configuration: popoverConfiguration
         )
+        popover.contentViewController = hostingController
+        intrinsicSizeObserver = UsagePopoverIntrinsicSizeObserver(
+            store: store,
+            hostingController: hostingController
+        ) { [weak popover] contentSize in
+            popover?.contentSize = contentSize
+        }
         popover.delegate = self
     }
 
@@ -226,6 +234,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                 self?.updateStatusButton(with: snapshot)
             }
             .store(in: &cancellables)
+
     }
 
     private func updateStatusButton(with snapshot: CombinedUsageSnapshot) {
@@ -237,13 +246,12 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         statusItem.length = presentation.showsCriticalCapsule ? 68 : 60
         button.image = StatusItemGaugeRenderer.image(
             utilization: presentation.utilization ?? 0,
-            color: presentation.iconColor,
-            isTemplate: presentation.band == .normal
+            color: presentation.iconColor
         )
         button.attributedTitle = NSAttributedString(
             string: presentation.percentText,
             attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold),
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
                 .foregroundColor: presentation.textColor
             ]
         )
@@ -281,55 +289,5 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         Task { @MainActor in
             try? await store.handle(command)
         }
-    }
-}
-
-enum StatusItemGaugeRenderer {
-    // Open ring: 260° sweep starting lower-left (220°), opening at the bottom.
-    private static let startAngle: CGFloat = 220
-    private static let sweepDegrees: CGFloat = 260
-
-    static func image(utilization: Double, color: NSColor, isTemplate: Bool = false) -> NSImage {
-        let size = NSSize(width: 18, height: 18)
-        let image = NSImage(size: size, flipped: false) { _ in
-            let center = NSPoint(x: 9, y: 8.5)
-            let radius: CGFloat = 6.4
-            let lineWidth: CGFloat = 2.6
-            let stroke = color.deviceRGBColor
-
-            let track = NSBezierPath()
-            track.appendArc(
-                withCenter: center,
-                radius: radius,
-                startAngle: startAngle,
-                endAngle: startAngle - sweepDegrees,
-                clockwise: true
-            )
-            track.lineWidth = lineWidth
-            track.lineCapStyle = .round
-            stroke.withAlphaComponent(0.3).setStroke()
-            track.stroke()
-
-            let fraction = min(100, max(0, utilization)) / 100
-            if fraction > 0 {
-                // Floor tiny readings at a visible nub so 1% doesn't vanish.
-                let fillSweep = max(sweepDegrees * CGFloat(fraction), 14)
-                let fill = NSBezierPath()
-                fill.appendArc(
-                    withCenter: center,
-                    radius: radius,
-                    startAngle: startAngle,
-                    endAngle: startAngle - fillSweep,
-                    clockwise: true
-                )
-                fill.lineWidth = lineWidth
-                fill.lineCapStyle = .round
-                stroke.setStroke()
-                fill.stroke()
-            }
-            return true
-        }
-        image.isTemplate = isTemplate
-        return image
     }
 }

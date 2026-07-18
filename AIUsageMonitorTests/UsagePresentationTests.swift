@@ -19,10 +19,10 @@ final class UsagePresentationTests: XCTestCase {
     }
 
     func testNeedleAngleIsBoundedAndMonotonic() {
-        XCTAssertEqual(UsagePresentation.needleAngleDegrees(for: -20), -115, accuracy: 0.0001)
-        XCTAssertEqual(UsagePresentation.needleAngleDegrees(for: 0), -115, accuracy: 0.0001)
-        XCTAssertEqual(UsagePresentation.needleAngleDegrees(for: 100), 115, accuracy: 0.0001)
-        XCTAssertEqual(UsagePresentation.needleAngleDegrees(for: 140), 115, accuracy: 0.0001)
+        XCTAssertEqual(UsagePresentation.needleAngleDegrees(for: -20), -90, accuracy: 0.0001)
+        XCTAssertEqual(UsagePresentation.needleAngleDegrees(for: 0), -90, accuracy: 0.0001)
+        XCTAssertEqual(UsagePresentation.needleAngleDegrees(for: 100), 90, accuracy: 0.0001)
+        XCTAssertEqual(UsagePresentation.needleAngleDegrees(for: 140), 90, accuracy: 0.0001)
 
         var previous = UsagePresentation.needleAngleDegrees(for: 0)
         for value in stride(from: 1.0, through: 100.0, by: 1.0) {
@@ -63,6 +63,40 @@ final class UsagePresentationTests: XCTestCase {
         XCTAssertEqual(noData.percentText, "--%")
         XCTAssertNil(noData.utilization)
         XCTAssertFalse(noData.accessibilityLabel.contains("0%"))
+    }
+
+    func testStatusItemTextRemainsReadableInLightAndDarkAppearances() throws {
+        let presentations = [
+            UsagePresentation.statusItem(for: UsageMonitorFixtures.noDataSnapshot),
+            UsagePresentation.statusItem(for: UsageMonitorFixtures.normalSnapshot),
+            UsagePresentation.statusItem(for: UsageMonitorFixtures.warningSnapshot)
+        ]
+        let samples: [(String, NSAppearance, NSColor)] = [
+            (
+                "light",
+                try XCTUnwrap(NSAppearance(named: .aqua)),
+                NSColor(srgbRed: 0.95, green: 0.95, blue: 0.95, alpha: 1)
+            ),
+            (
+                "dark",
+                try XCTUnwrap(NSAppearance(named: .darkAqua)),
+                NSColor(srgbRed: 0.13, green: 0.13, blue: 0.13, alpha: 1)
+            )
+        ]
+
+        for presentation in presentations {
+            for (appearanceName, appearance, background) in samples {
+                XCTAssertGreaterThanOrEqual(
+                    contrastRatio(
+                        foreground: presentation.textColor,
+                        background: background,
+                        appearance: appearance
+                    ),
+                    4.5,
+                    "\(presentation.percentText) text is unreadable in the \(appearanceName) menu bar"
+                )
+            }
+        }
     }
 
     func testExpandedHistorySeriesComeFromStoredSnapshotsAndPreserveResetMarkers() {
@@ -145,6 +179,41 @@ final class UsagePresentationTests: XCTestCase {
         ))
         XCTAssertEqual(session.range, .twentyFourHours)
         XCTAssertFalse(session.showsRangeSelector)
+    }
+
+    private func contrastRatio(
+        foreground: NSColor,
+        background: NSColor,
+        appearance: NSAppearance
+    ) -> CGFloat {
+        var resolvedForeground = foreground
+        appearance.performAsCurrentDrawingAppearance {
+            resolvedForeground = foreground.usingColorSpace(.sRGB) ?? foreground
+        }
+        let resolvedBackground = background.usingColorSpace(.sRGB) ?? background
+        let alpha = resolvedForeground.alphaComponent
+        let composited = NSColor(
+            srgbRed: resolvedForeground.redComponent * alpha + resolvedBackground.redComponent * (1 - alpha),
+            green: resolvedForeground.greenComponent * alpha + resolvedBackground.greenComponent * (1 - alpha),
+            blue: resolvedForeground.blueComponent * alpha + resolvedBackground.blueComponent * (1 - alpha),
+            alpha: 1
+        )
+        let lighter = max(relativeLuminance(composited), relativeLuminance(resolvedBackground))
+        let darker = min(relativeLuminance(composited), relativeLuminance(resolvedBackground))
+        return (lighter + 0.05) / (darker + 0.05)
+    }
+
+    private func relativeLuminance(_ color: NSColor) -> CGFloat {
+        func linearize(_ component: CGFloat) -> CGFloat {
+            component <= 0.04045
+                ? component / 12.92
+                : pow((component + 0.055) / 1.055, 2.4)
+        }
+
+        let rgb = color.usingColorSpace(.sRGB) ?? color
+        return 0.2126 * linearize(rgb.redComponent)
+            + 0.7152 * linearize(rgb.greenComponent)
+            + 0.0722 * linearize(rgb.blueComponent)
     }
 
     private func meter(_ kind: MeterKind, percent: Double) -> UsageMeterSnapshot {
