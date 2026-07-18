@@ -213,10 +213,6 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private func configurePopover() {
         popover.behavior = .transient
         popover.animates = true
-        popover.contentSize = NSSize(
-            width: UsagePopoverMetrics.contentWidth,
-            height: UsagePopoverMetrics.contentHeight
-        )
         popover.contentViewController = UsagePopoverHostFactory.makeHostingController(
             store: store,
             configuration: popoverConfiguration
@@ -241,12 +237,13 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         statusItem.length = presentation.showsCriticalCapsule ? 68 : 60
         button.image = StatusItemGaugeRenderer.image(
             utilization: presentation.utilization ?? 0,
-            color: presentation.iconColor
+            color: presentation.iconColor,
+            isTemplate: presentation.band == .normal
         )
         button.attributedTitle = NSAttributedString(
             string: presentation.percentText,
             attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold),
                 .foregroundColor: presentation.textColor
             ]
         )
@@ -288,43 +285,51 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 }
 
 enum StatusItemGaugeRenderer {
-    static func image(utilization: Double, color: NSColor) -> NSImage {
-        let size = NSSize(width: 18, height: 14)
-        let image = NSImage(size: size)
-        image.lockFocus()
+    // Open ring: 260° sweep starting lower-left (220°), opening at the bottom.
+    private static let startAngle: CGFloat = 220
+    private static let sweepDegrees: CGFloat = 260
 
-        let center = NSPoint(x: 9, y: 3.5)
-        let radius: CGFloat = 7
-        let strokeColor = color.deviceRGBColor
-        strokeColor.setStroke()
+    static func image(utilization: Double, color: NSColor, isTemplate: Bool = false) -> NSImage {
+        let size = NSSize(width: 18, height: 18)
+        let image = NSImage(size: size, flipped: false) { _ in
+            let center = NSPoint(x: 9, y: 8.5)
+            let radius: CGFloat = 6.4
+            let lineWidth: CGFloat = 2.6
+            let stroke = color.deviceRGBColor
 
-        let arc = NSBezierPath()
-        arc.appendArc(
-            withCenter: center,
-            radius: radius,
-            startAngle: 200,
-            endAngle: -20,
-            clockwise: false
-        )
-        arc.lineWidth = 1.8
-        arc.lineCapStyle = .round
-        arc.stroke()
+            let track = NSBezierPath()
+            track.appendArc(
+                withCenter: center,
+                radius: radius,
+                startAngle: startAngle,
+                endAngle: startAngle - sweepDegrees,
+                clockwise: true
+            )
+            track.lineWidth = lineWidth
+            track.lineCapStyle = .round
+            stroke.withAlphaComponent(0.3).setStroke()
+            track.stroke()
 
-        let angle = UsagePresentation.needleAngleDegrees(for: utilization)
-        let radians = (angle + 90) * .pi / 180
-        let needleEnd = NSPoint(
-            x: center.x + cos(radians) * 5.2,
-            y: center.y + sin(radians) * 5.2
-        )
-        let needle = NSBezierPath()
-        needle.move(to: center)
-        needle.line(to: needleEnd)
-        needle.lineWidth = 1.4
-        needle.lineCapStyle = .round
-        needle.stroke()
-
-        image.unlockFocus()
-        image.isTemplate = false
+            let fraction = min(100, max(0, utilization)) / 100
+            if fraction > 0 {
+                // Floor tiny readings at a visible nub so 1% doesn't vanish.
+                let fillSweep = max(sweepDegrees * CGFloat(fraction), 14)
+                let fill = NSBezierPath()
+                fill.appendArc(
+                    withCenter: center,
+                    radius: radius,
+                    startAngle: startAngle,
+                    endAngle: startAngle - fillSweep,
+                    clockwise: true
+                )
+                fill.lineWidth = lineWidth
+                fill.lineCapStyle = .round
+                stroke.setStroke()
+                fill.stroke()
+            }
+            return true
+        }
+        image.isTemplate = isTemplate
         return image
     }
 }

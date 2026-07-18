@@ -12,7 +12,9 @@ enum UsagePopoverHostFactory {
         store: UsageMonitorStore,
         configuration: UsagePopoverConfiguration
     ) -> NSHostingController<UsagePopoverView> {
-        NSHostingController(rootView: UsagePopoverView(store: store, configuration: configuration))
+        let host = NSHostingController(rootView: UsagePopoverView(store: store, configuration: configuration))
+        host.sizingOptions = .preferredContentSize
+        return host
     }
 }
 
@@ -37,7 +39,7 @@ struct UsagePopoverView: View {
                 .accessibilityIdentifier("navigation-state")
                 .accessibilityLabel(accessibilityState)
         }
-        .frame(width: UsagePopoverMetrics.contentWidth, height: UsagePopoverMetrics.contentHeight)
+        .frame(width: UsagePopoverMetrics.contentWidth)
         .clipShape(RoundedRectangle(cornerRadius: UsagePopoverMetrics.cornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: UsagePopoverMetrics.cornerRadius, style: .continuous)
@@ -416,22 +418,38 @@ private struct NoDataProviderRow: View {
     var providerID: ProviderID
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
             Image(systemName: "minus.circle")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
                 .accessibilityHidden(true)
 
-            Text("No data")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("No data")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+
+                if let hint {
+                    Text(hint)
+                        .font(.system(size: 9.5, weight: .regular))
+                        .foregroundStyle(UsagePalette.mutedText.swiftUIColor.opacity(0.8))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
 
             Spacer()
         }
-        .frame(height: UsagePopoverMetrics.primaryRowHeight)
+        .frame(minHeight: UsagePopoverMetrics.primaryRowHeight, alignment: .top)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(providerID.displayName) no data")
         .accessibilityIdentifier("\(providerID.rawValue)-no-data-row")
+    }
+
+    private var hint: String? {
+        guard providerID == .claude else {
+            return nil
+        }
+        return "Usage syncs while Claude Code runs in a terminal — send one message there to populate."
     }
 }
 

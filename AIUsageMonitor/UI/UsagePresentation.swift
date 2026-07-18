@@ -114,8 +114,8 @@ enum UsagePresentation {
                 accessibilityLabel: "AI Usage no data",
                 utilization: nil,
                 band: .normal,
-                iconColor: NSColor.white.withAlphaComponent(0.78),
-                textColor: NSColor.white.withAlphaComponent(0.82),
+                iconColor: NSColor.labelColor,
+                textColor: NSColor.labelColor.withAlphaComponent(0.85),
                 backgroundColor: nil,
                 showsCriticalCapsule: false
             )
@@ -132,8 +132,8 @@ enum UsagePresentation {
                 accessibilityLabel: "AI Usage \(percentText), normal",
                 utilization: utilization,
                 band: band,
-                iconColor: NSColor.white.withAlphaComponent(0.78),
-                textColor: NSColor.white.withAlphaComponent(0.88),
+                iconColor: NSColor.labelColor,
+                textColor: NSColor.labelColor.withAlphaComponent(0.9),
                 backgroundColor: nil,
                 showsCriticalCapsule: false
             )

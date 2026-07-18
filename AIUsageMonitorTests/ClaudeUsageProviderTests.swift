@@ -130,8 +130,33 @@ final class ClaudeUsageProviderTests: XCTestCase {
         XCTAssertEqual(invalidationCount, 0)
     }
 
-    func testReconnectInvalidatesUsageFromThePreviousClaudeAccount() async throws {
-        let cli = StubClaudeCLI(statuses: [loggedInStatus, loggedInStatus])
+    func testReconnectWhileConnectedDoesNotReloginOrDropUsage() async throws {
+        let cli = StubClaudeCLI(statuses: [loggedInStatus])
+        let installer = StubClaudeStatusLineInstaller(installed: true)
+        let cache = StubClaudeUsageCache(cache: nil)
+        let provider = ClaudeUsageProvider(
+            cli: cli,
+            usageCache: cache,
+            statusLineInstaller: installer,
+            clock: FixedClock(now: checkedAt)
+        )
+
+        let result = try await provider.startAuthentication()
+        let loginStartCount = await cli.loginStartCount()
+        let invalidationCount = await cache.invalidationCount()
+
+        XCTAssertEqual(result, .completed)
+        XCTAssertEqual(loginStartCount, 0)
+        XCTAssertEqual(invalidationCount, 0)
+    }
+
+    func testSigningInInvalidatesUsageFromThePreviousClaudeAccount() async throws {
+        let signedOutStatus = ClaudeAuthenticationStatus(
+            loggedIn: false,
+            authMethod: nil,
+            subscriptionType: nil
+        )
+        let cli = StubClaudeCLI(statuses: [signedOutStatus, loggedInStatus])
         let installer = StubClaudeStatusLineInstaller(installed: true)
         let cache = StubClaudeUsageCache(cache: nil)
         let provider = ClaudeUsageProvider(
@@ -142,8 +167,10 @@ final class ClaudeUsageProviderTests: XCTestCase {
         )
 
         _ = try await provider.startAuthentication()
+        let loginStartCount = await cli.loginStartCount()
         let invalidationCount = await cache.invalidationCount()
 
+        XCTAssertEqual(loginStartCount, 1)
         XCTAssertEqual(invalidationCount, 1)
     }
 

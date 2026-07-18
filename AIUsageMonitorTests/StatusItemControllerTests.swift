@@ -65,7 +65,7 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertEqual(button.constraints.filter { $0.firstItem as? NSView === eventView || $0.secondItem as? NSView === eventView }.count, 4)
     }
 
-    func testProductionPopoverUsesSharedTypedHostAtFixedContentSize() throws {
+    func testProductionPopoverUsesSharedTypedHostSizedToContent() throws {
         let configuration = UsagePopoverConfiguration.populatedFixture
         let controller = StatusItemController(
             store: makeStore(),
@@ -73,8 +73,7 @@ final class StatusItemControllerTests: XCTestCase {
         )
         let host = try XCTUnwrap(controller.popover.contentViewController as? NSHostingController<UsagePopoverView>)
 
-        XCTAssertEqual(controller.popover.contentSize.width, UsagePopoverMetrics.contentWidth)
-        XCTAssertEqual(controller.popover.contentSize.height, UsagePopoverMetrics.contentHeight)
+        XCTAssertEqual(host.sizingOptions, .preferredContentSize)
         XCTAssertEqual(host.rootView.configuration, configuration)
     }
 

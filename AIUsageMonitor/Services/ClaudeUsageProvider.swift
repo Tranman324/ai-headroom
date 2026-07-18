@@ -532,9 +532,7 @@ struct ClaudeUsageProvider: UsageProviderFetching, ProviderAuthenticationManagin
 
     func startAuthentication() async throws -> ProviderAuthenticationResult {
         let status = try await readAuthenticationStatus()
-        let bridgeInstalled = await statusLineInstaller.isInstalled()
-        var didAuthenticate = false
-        if !status.usesClaudeAIAuthentication || bridgeInstalled {
+        if !status.usesClaudeAIAuthentication {
             do {
                 try await cli.startClaudeAIAuthentication()
             } catch {
@@ -544,10 +542,8 @@ struct ClaudeUsageProvider: UsageProviderFetching, ProviderAuthenticationManagin
             guard refreshedStatus.usesClaudeAIAuthentication else {
                 throw ProviderClientFailure.authenticationRequired(provider: provider)
             }
-            didAuthenticate = true
-        }
-
-        if didAuthenticate {
+            // The cache may hold usage from whichever account was signed in
+            // before this login, so it cannot be trusted afterward.
             do {
                 try await usageCache.invalidateUsageCache()
             } catch {

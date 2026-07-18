@@ -242,7 +242,7 @@ final class StatusItemEvidenceTests: XCTestCase {
             utilization: presentation.utilization ?? 0,
             color: presentation.iconColor
         )
-        gauge.draw(in: NSRect(x: chipRect.minX + 6, y: chipRect.midY - 7, width: 18, height: 14))
+        gauge.draw(in: NSRect(x: chipRect.minX + 6, y: chipRect.midY - 9, width: 18, height: 18))
         NSAttributedString(
             string: presentation.percentText,
             attributes: [
@@ -256,7 +256,7 @@ final class StatusItemEvidenceTests: XCTestCase {
             utilization: presentation.utilization ?? 0,
             color: presentation.iconColor
         )
-        enlarged.draw(in: NSRect(x: 234, y: rect.midY - 21, width: 54, height: 42))
+        enlarged.draw(in: NSRect(x: 234, y: rect.midY - 27, width: 54, height: 54))
     }
 
     // MARK: - Helpers
@@ -286,7 +286,7 @@ final class StatusItemEvidenceTests: XCTestCase {
     private func expectedIconColor(for band: UsageStatusBand) -> NSColor {
         switch band {
         case .normal:
-            return NSColor.white.withAlphaComponent(0.78)
+            return NSColor.labelColor
         case .warning:
             return UsagePalette.warning
         case .critical:
