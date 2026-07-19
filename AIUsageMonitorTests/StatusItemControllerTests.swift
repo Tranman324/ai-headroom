@@ -65,16 +65,143 @@ final class StatusItemControllerTests: XCTestCase {
         XCTAssertEqual(button.constraints.filter { $0.firstItem as? NSView === eventView || $0.secondItem as? NSView === eventView }.count, 4)
     }
 
-    func testProductionPopoverUsesSharedTypedHostSizedToContent() throws {
+    func testProductionPopoverUsesSharedTypedHostWithContentSizedHeight() throws {
         let configuration = UsagePopoverConfiguration.populatedFixture
         let controller = StatusItemController(
-            store: makeStore(),
+            store: makeStore(snapshot: UsageMonitorFixtures.noDataSnapshot),
             popoverConfiguration: configuration
         )
         let host = try XCTUnwrap(controller.popover.contentViewController as? NSHostingController<UsagePopoverView>)
 
         XCTAssertEqual(host.sizingOptions, .preferredContentSize)
+        XCTAssertEqual(controller.popover.contentSize.width, UsagePopoverMetrics.contentWidth)
+        XCTAssertGreaterThan(controller.popover.contentSize.height, 0)
+        XCTAssertLessThan(controller.popover.contentSize.height, 520)
+        XCTAssertEqual(host.preferredContentSize, controller.popover.contentSize)
         XCTAssertEqual(host.rootView.configuration, configuration)
+    }
+
+    func testPopoverResizesWhenNavigationContentChanges() async throws {
+        let store = makeStore(snapshot: UsageMonitorFixtures.noDataSnapshot)
+        let controller = StatusItemController(store: store)
+        let listHeight = controller.popover.contentSize.height
+
+        store.navigation.isSettingsPresented = true
+        await Task.yield()
+        await Task.yield()
+
+        XCTAssertNotEqual(controller.popover.contentSize.height, listHeight)
+        XCTAssertEqual(
+            controller.popover.contentViewController?.preferredContentSize,
+            controller.popover.contentSize
+        )
+    }
+
+    func testFixtureWindowObservesNavigationAndStoreContentForIntrinsicResizing() async throws {
+        let store = UsageMonitorStore(
+            dependencies: AppCompositionRoot.fixture(snapshot: UsageMonitorFixtures.criticalSnapshot),
+            initialSnapshot: UsageMonitorFixtures.noDataSnapshot
+        )
+        let configuration = FixtureLaunchConfiguration(
+            launchMode: .fixture(.normal),
+            shouldOpenFixtureWindow: true,
+            shouldWriteScreenshot: false,
+            shouldTerminateAfterScreenshot: false,
+            startsWithHistoryExpanded: false,
+            screenshotDirectory: nil
+        )
+        let controller = FixtureWindowController(store: store, configuration: configuration)
+        let initialSize = controller.window.contentLayoutRect.size
+
+        store.navigation.isSettingsPresented = true
+        await Task.yield()
+        await Task.yield()
+        let settingsSize = controller.window.contentLayoutRect.size
+
+        XCTAssertEqual(initialSize.width, UsagePopoverMetrics.contentWidth)
+        XCTAssertEqual(settingsSize.width, UsagePopoverMetrics.contentWidth)
+        XCTAssertNotEqual(settingsSize.height, initialSize.height)
+
+        store.navigation.isSettingsPresented = false
+        store.navigation.isHistoryExpanded = true
+        await Task.yield()
+        await Task.yield()
+        let expandedListSize = controller.window.contentLayoutRect.size
+
+        XCTAssertEqual(expandedListSize.width, UsagePopoverMetrics.contentWidth)
+        XCTAssertNotEqual(expandedListSize.height, settingsSize.height)
+        XCTAssertEqual(
+            controller.window.contentViewController?.preferredContentSize,
+            expandedListSize
+        )
+    }
+
+    func testGaugeTrackRemainsVisibleAcrossUpperHalfAtMenuBarSize() throws {
+        let image = StatusItemGaugeRenderer.image(utilization: 5, color: .white)
+        let representation = try XCTUnwrap(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+        let fullHeight = 0..<representation.pixelsHigh
+        let bitmapTopHalf = (representation.pixelsHigh / 2)..<representation.pixelsHigh
+        let thirdWidth = representation.pixelsWide / 3
+        let horizontalThirds = [
+            0..<thirdWidth,
+            thirdWidth..<(thirdWidth * 2),
+            (thirdWidth * 2)..<representation.pixelsWide
+        ]
+
+        XCTAssertEqual(image.size, NSSize(width: 18, height: 14))
+        XCTAssertGreaterThan(
+            visiblePixelCount(
+                in: representation,
+                xRange: 0..<representation.pixelsWide,
+                yRange: bitmapTopHalf
+            ),
+            0,
+            "The gauge crown must reach the top half of the menu-bar canvas"
+        )
+        for third in horizontalThirds {
+            XCTAssertGreaterThan(
+                visiblePixelCount(in: representation, xRange: third, yRange: fullHeight),
+                0,
+                "The gauge track must remain visible across every horizontal third"
+            )
+        }
+    }
+
+    func testStatusButtonContentWritesLightAndDarkVisualEvidence() throws {
+        let outputDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AIUsageMonitorTests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+        let samples: [(String, CombinedUsageSnapshot)] = [
+            ("normal", UsageMonitorFixtures.normalSnapshot),
+            ("warning", UsageMonitorFixtures.warningSnapshot),
+            ("critical", UsageMonitorFixtures.criticalSnapshot)
+        ]
+        let appearances: [(String, NSAppearance.Name, NSColor)] = [
+            ("light", .aqua, NSColor(srgbRed: 0.95, green: 0.95, blue: 0.95, alpha: 1)),
+            ("dark", .darkAqua, NSColor(srgbRed: 0.13, green: 0.13, blue: 0.13, alpha: 1))
+        ]
+
+        for (stateName, snapshot) in samples {
+            let controller = StatusItemController(store: makeStore(snapshot: snapshot))
+            let button = try XCTUnwrap(controller.statusItem.button)
+            XCTAssertFalse(try XCTUnwrap(button.image).isTemplate)
+
+            for (appearanceName, appearanceNameValue, backgroundColor) in appearances {
+                let appearance = try XCTUnwrap(NSAppearance(named: appearanceNameValue))
+                let data = try statusButtonEvidence(
+                    button,
+                    appearance: appearance,
+                    backgroundColor: backgroundColor
+                )
+                let destination = outputDirectory.appendingPathComponent(
+                    "status-item-\(stateName)-\(appearanceName)@2x.png"
+                )
+                try data.write(to: destination, options: .atomic)
+                XCTAssertGreaterThan(data.count, 500)
+            }
+        }
     }
 
     func testContextMenuOrderShortcutsAndLaunchCheckmark() {
@@ -102,6 +229,59 @@ final class StatusItemControllerTests: XCTestCase {
             clickCount: 1,
             pressure: 0
         ))
+    }
+
+    private func statusButtonEvidence(
+        _ button: NSStatusBarButton,
+        appearance: NSAppearance,
+        backgroundColor: NSColor
+    ) throws -> Data {
+        let buttonSize = button.bounds.size
+        XCTAssertGreaterThan(buttonSize.width, 18)
+        XCTAssertGreaterThanOrEqual(buttonSize.height, 22)
+
+        let canvasSize = NSSize(width: buttonSize.width + 16, height: 30)
+        let canvas = NSView(frame: NSRect(origin: .zero, size: canvasSize))
+        canvas.appearance = appearance
+        canvas.wantsLayer = true
+        canvas.layer?.backgroundColor = backgroundColor.cgColor
+
+        let evidenceButton = NSButton(frame: NSRect(
+            x: 8,
+            y: (canvasSize.height - buttonSize.height) / 2,
+            width: buttonSize.width,
+            height: buttonSize.height
+        ))
+        evidenceButton.appearance = appearance
+        evidenceButton.imagePosition = button.imagePosition
+        evidenceButton.isBordered = button.isBordered
+        evidenceButton.image = button.image
+        evidenceButton.attributedTitle = button.attributedTitle
+        evidenceButton.wantsLayer = true
+        evidenceButton.layer?.cornerRadius = button.layer?.cornerRadius ?? 0
+        evidenceButton.layer?.backgroundColor = button.layer?.backgroundColor
+        canvas.addSubview(evidenceButton)
+        canvas.layoutSubtreeIfNeeded()
+        canvas.displayIfNeeded()
+
+        let scale: CGFloat = 2
+        let canvasBitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(ceil(canvasSize.width * scale)),
+            pixelsHigh: Int(ceil(canvasSize.height * scale)),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        canvasBitmap.size = canvasSize
+        appearance.performAsCurrentDrawingAppearance {
+            canvas.cacheDisplay(in: canvas.bounds, to: canvasBitmap)
+        }
+        return try XCTUnwrap(canvasBitmap.representation(using: .png, properties: [:]))
     }
 
     private func assertContextMenu(
@@ -142,10 +322,22 @@ final class StatusItemControllerTests: XCTestCase {
         }
     }
 
-    private func makeStore() -> UsageMonitorStore {
+    private func visiblePixelCount(
+        in representation: NSBitmapImageRep,
+        xRange: Range<Int>,
+        yRange: Range<Int>
+    ) -> Int {
+        yRange.reduce(into: 0) { count, y in
+            for x in xRange where (representation.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.05 {
+                count += 1
+            }
+        }
+    }
+
+    private func makeStore(snapshot: CombinedUsageSnapshot = UsageMonitorFixtures.criticalSnapshot) -> UsageMonitorStore {
         UsageMonitorStore(
-            dependencies: AppCompositionRoot.fixture(snapshot: UsageMonitorFixtures.criticalSnapshot),
-            initialSnapshot: UsageMonitorFixtures.criticalSnapshot
+            dependencies: AppCompositionRoot.fixture(snapshot: snapshot),
+            initialSnapshot: snapshot
         )
     }
 }

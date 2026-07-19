@@ -241,7 +241,9 @@ struct FixtureLaunchConfiguration {
 final class FixtureWindowController {
     private let store: UsageMonitorStore
     private let configuration: FixtureLaunchConfiguration
-    private let window: NSWindow
+    private let hostingController: NSHostingController<UsagePopoverView>
+    private(set) var window: NSWindow
+    private var intrinsicSizeObserver: UsagePopoverIntrinsicSizeObserver!
 
     init(store: UsageMonitorStore, configuration: FixtureLaunchConfiguration) {
         self.store = store
@@ -251,13 +253,10 @@ final class FixtureWindowController {
             store: store,
             configuration: configuration.popoverConfiguration
         )
+        self.hostingController = controller
+        let contentSize = UsagePopoverHostFactory.contentSize(for: controller)
         self.window = NSWindow(
-            contentRect: NSRect(
-                x: 0,
-                y: 0,
-                width: UsagePopoverMetrics.contentWidth,
-                height: UsagePopoverMetrics.contentHeight
-            ),
+            contentRect: NSRect(origin: .zero, size: contentSize),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -266,10 +265,13 @@ final class FixtureWindowController {
         window.identifier = NSUserInterfaceItemIdentifier("usage-fixture-window")
         window.level = .floating
         window.contentViewController = controller
-        window.setContentSize(NSSize(
-            width: UsagePopoverMetrics.contentWidth,
-            height: UsagePopoverMetrics.contentHeight
-        ))
+        window.setContentSize(contentSize)
+        intrinsicSizeObserver = UsagePopoverIntrinsicSizeObserver(
+            store: store,
+            hostingController: controller
+        ) { [weak window] contentSize in
+            window?.setContentSize(contentSize)
+        }
     }
 
     func show() {
@@ -281,9 +283,11 @@ final class FixtureWindowController {
             return
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [configuration, store, window] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [configuration, intrinsicSizeObserver, store, window] in
             Task { @MainActor in
                 await store.loadHistory(since: store.snapshot.capturedAt.addingTimeInterval(-UsagePresentation.historyLookback))
+                intrinsicSizeObserver?.resizeNow()
+                window.displayIfNeeded()
                 try? FixtureEvidenceWriter.writeWindowScreenshot(
                     window,
                     scenario: configuration.scenario,
@@ -332,7 +336,7 @@ private enum FixtureEvidenceWriter {
 
         let metadata = """
         scenario: \(scenarioName)
-        content_points: \(Int(UsagePopoverMetrics.contentWidth))x\(Int(UsagePopoverMetrics.contentHeight))
+        content_points: \(Int(round(bitmap.size.width)))x\(Int(round(bitmap.size.height)))
         pixels: \(bitmap.pixelsWide)x\(bitmap.pixelsHigh)
         status_band: \(snapshot.hottestBand.rawValue)
         hottest_percent: \(hottestPercentText(snapshot))

@@ -28,6 +28,28 @@ enum UsagePalette {
     static let allModels = NSColor(hex: 0xB4B0AA)
     static let sonnet = NSColor(hex: 0xC2A26B)
     static let haiku = NSColor(hex: 0x8FA0B8)
+    static let statusText = adaptiveStatusColor(
+        light: NSColor(deviceWhite: 0.08, alpha: 0.86),
+        dark: NSColor(deviceWhite: 1, alpha: 0.90)
+    )
+    static let statusMutedText = adaptiveStatusColor(
+        light: NSColor(deviceWhite: 0.08, alpha: 0.72),
+        dark: NSColor(deviceWhite: 1, alpha: 0.76)
+    )
+    static let statusWarning = adaptiveStatusColor(
+        light: NSColor(hex: 0x855600),
+        dark: NSColor(hex: 0xFFD25A)
+    )
+    static let statusAccent = adaptiveStatusColor(
+        light: NSColor(hex: 0x0077A8),
+        dark: NSColor(hex: 0x80D6FF)
+    )
+
+    private static func adaptiveStatusColor(light: NSColor, dark: NSColor) -> NSColor {
+        NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        }
+    }
 
     static func accent(for provider: ProviderID) -> NSColor {
         switch provider {

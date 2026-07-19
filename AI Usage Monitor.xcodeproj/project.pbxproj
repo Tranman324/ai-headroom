@@ -22,6 +22,7 @@
 		B10000000000000000000018 /* AppCompositionRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* AppCompositionRoot.swift */; };
 		B10000000000000000000019 /* UsageMonitorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* UsageMonitorStore.swift */; };
 		B30000000000000000000001 /* UsagePollingCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000001 /* UsagePollingCoordinator.swift */; };
+
 		B1000000000000000000001A /* UsageMonitorFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001A /* UsageMonitorFixtures.swift */; };
 		B1000000000000000000002B /* HistoryRecords.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000002B /* HistoryRecords.swift */; };
 		B1000000000000000000002C /* UsageAnalytics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000002C /* UsageAnalytics.swift */; };
@@ -31,6 +32,7 @@
 		B20000000000000000000032 /* UsagePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000032 /* UsagePresentation.swift */; };
 		B20000000000000000000033 /* UsagePopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000033 /* UsagePopoverView.swift */; };
 		B20000000000000000000034 /* StatusItemController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000034 /* StatusItemController.swift */; };
+		B50000000000000000000002 /* StatusItemGaugeRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A50000000000000000000002 /* StatusItemGaugeRenderer.swift */; };
 		B20000000000000000000035 /* FixtureLaunchConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000035 /* FixtureLaunchConfiguration.swift */; };
 		B10000000000000000000020 /* MeterKindTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000020 /* MeterKindTests.swift */; };
 		B10000000000000000000021 /* FixtureIntegrityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000021 /* FixtureIntegrityTests.swift */; };
@@ -44,6 +46,7 @@
 		B20000000000000000000040 /* UsagePresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000040 /* UsagePresentationTests.swift */; };
 		B20000000000000000000041 /* StatusItemControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000041 /* StatusItemControllerTests.swift */; };
 		B20000000000000000000099 /* StatusItemEvidenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000099 /* StatusItemEvidenceTests.swift */; };
+		B50000000000000000000001 /* StatusItemGaugeRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A50000000000000000000001 /* StatusItemGaugeRendererTests.swift */; };
 		B30000000000000000000003 /* UsagePollingCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000003 /* UsagePollingCoordinatorTests.swift */; };
 		B10000000000000000000027 /* AIUsageMonitorUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000027 /* AIUsageMonitorUITests.swift */; };
 		B1000000000000000000002E /* LocalHistoryStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000002E /* LocalHistoryStoreTests.swift */; };
@@ -87,6 +90,7 @@
 		A10000000000000000000018 /* AppCompositionRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCompositionRoot.swift; sourceTree = "<group>"; };
 		A10000000000000000000019 /* UsageMonitorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMonitorStore.swift; sourceTree = "<group>"; };
 		A30000000000000000000001 /* UsagePollingCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsagePollingCoordinator.swift; sourceTree = "<group>"; };
+
 		A1000000000000000000001A /* UsageMonitorFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMonitorFixtures.swift; sourceTree = "<group>"; };
 		A1000000000000000000002B /* HistoryRecords.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryRecords.swift; sourceTree = "<group>"; };
 		A1000000000000000000002C /* UsageAnalytics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageAnalytics.swift; sourceTree = "<group>"; };
@@ -96,6 +100,7 @@
 		A20000000000000000000032 /* UsagePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsagePresentation.swift; sourceTree = "<group>"; };
 		A20000000000000000000033 /* UsagePopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsagePopoverView.swift; sourceTree = "<group>"; };
 		A20000000000000000000034 /* StatusItemController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusItemController.swift; sourceTree = "<group>"; };
+		A50000000000000000000002 /* StatusItemGaugeRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusItemGaugeRenderer.swift; sourceTree = "<group>"; };
 		A20000000000000000000035 /* FixtureLaunchConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureLaunchConfiguration.swift; sourceTree = "<group>"; };
 		A10000000000000000000020 /* MeterKindTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeterKindTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000021 /* FixtureIntegrityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureIntegrityTests.swift; sourceTree = "<group>"; };
@@ -109,6 +114,7 @@
 		A20000000000000000000040 /* UsagePresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsagePresentationTests.swift; sourceTree = "<group>"; };
 		A20000000000000000000041 /* StatusItemControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusItemControllerTests.swift; sourceTree = "<group>"; };
 		A20000000000000000000099 /* StatusItemEvidenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusItemEvidenceTests.swift; sourceTree = "<group>"; };
+		A50000000000000000000001 /* StatusItemGaugeRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusItemGaugeRendererTests.swift; sourceTree = "<group>"; };
 		A30000000000000000000003 /* UsagePollingCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsagePollingCoordinatorTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000027 /* AIUsageMonitorUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIUsageMonitorUITests.swift; sourceTree = "<group>"; };
 		A1000000000000000000002E /* LocalHistoryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalHistoryStoreTests.swift; sourceTree = "<group>"; };
@@ -209,6 +215,7 @@
 				A10000000000000000000018 /* AppCompositionRoot.swift */,
 				A10000000000000000000019 /* UsageMonitorStore.swift */,
 				A30000000000000000000001 /* UsagePollingCoordinator.swift */,
+
 			);
 			path = Composition;
 			sourceTree = "<group>";
@@ -228,6 +235,7 @@
 				A20000000000000000000032 /* UsagePresentation.swift */,
 				A20000000000000000000033 /* UsagePopoverView.swift */,
 				A20000000000000000000034 /* StatusItemController.swift */,
+				A50000000000000000000002 /* StatusItemGaugeRenderer.swift */,
 				A20000000000000000000035 /* FixtureLaunchConfiguration.swift */,
 			);
 			path = UI;
@@ -251,6 +259,7 @@
 				A20000000000000000000040 /* UsagePresentationTests.swift */,
 				A20000000000000000000041 /* StatusItemControllerTests.swift */,
 				A20000000000000000000099 /* StatusItemEvidenceTests.swift */,
+				A50000000000000000000001 /* StatusItemGaugeRendererTests.swift */,
 				A30000000000000000000003 /* UsagePollingCoordinatorTests.swift */,
 			);
 			path = AIUsageMonitorTests;
@@ -397,6 +406,7 @@
 				B10000000000000000000018 /* AppCompositionRoot.swift in Sources */,
 				B10000000000000000000019 /* UsageMonitorStore.swift in Sources */,
 				B30000000000000000000001 /* UsagePollingCoordinator.swift in Sources */,
+
 				B10000000000000000000011 /* UsageDomain.swift in Sources */,
 				B10000000000000000000012 /* ProviderState.swift in Sources */,
 				B10000000000000000000013 /* Settings.swift in Sources */,
@@ -408,6 +418,7 @@
 				B20000000000000000000032 /* UsagePresentation.swift in Sources */,
 				B20000000000000000000033 /* UsagePopoverView.swift in Sources */,
 				B20000000000000000000034 /* StatusItemController.swift in Sources */,
+				B50000000000000000000002 /* StatusItemGaugeRenderer.swift in Sources */,
 				B20000000000000000000035 /* FixtureLaunchConfiguration.swift in Sources */,
 				B10000000000000000000015 /* ServiceProtocols.swift in Sources */,
 				B10000000000000000000016 /* PlaceholderServices.swift in Sources */,
@@ -439,6 +450,7 @@
 				B20000000000000000000040 /* UsagePresentationTests.swift in Sources */,
 				B20000000000000000000041 /* StatusItemControllerTests.swift in Sources */,
 				B20000000000000000000099 /* StatusItemEvidenceTests.swift in Sources */,
+				B50000000000000000000001 /* StatusItemGaugeRendererTests.swift in Sources */,
 				B30000000000000000000003 /* UsagePollingCoordinatorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -590,12 +602,14 @@
 				CODE_SIGNING_ALLOWED = NO;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 3;
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "AI Usage Monitor";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jeremytran.aiusagemonitor;
 				PRODUCT_MODULE_NAME = AIUsageMonitor;
 				PRODUCT_NAME = "AI Usage Monitor";
@@ -610,12 +624,14 @@
 				CODE_SIGNING_ALLOWED = NO;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 3;
 				ENABLE_HARDENED_RUNTIME = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "AI Usage Monitor";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jeremytran.aiusagemonitor;
 				PRODUCT_MODULE_NAME = AIUsageMonitor;
 				PRODUCT_NAME = "AI Usage Monitor";
