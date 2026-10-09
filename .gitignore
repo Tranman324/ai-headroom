@@ -3,3 +3,6 @@
 .build/
 .codex/
 *.profraw
+xcuserdata/
+DerivedData/
+.DS_Store

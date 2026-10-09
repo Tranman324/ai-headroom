@@ -1,3 +1,9 @@
+> **Historical document.** This is the original build brief handed to the coding agent in July 2026.
+> The shipped app diverged in one important way: it no longer reads Keychain items or `~/.codex/auth.json`
+> and never refreshes tokens. Commit `d63225c` moved authentication to the providers' own CLIs
+> (`claude auth`, `codex app-server`). See the [README](../README.md) for current behavior.
+> Design files referenced below now live in [`docs/design/`](design/).
+
 # AI Usage Monitor — Codex Handoff Brief
 
 ## What to Build
