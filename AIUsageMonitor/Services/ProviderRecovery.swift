@@ -278,6 +278,7 @@ struct ProviderDiagnosticsEnvironment: Sendable {
     var codexLocator: any CodexAppServerRuntimeLocating & ProviderExecutableInspecting
     var usageCache: any ClaudeUsageCacheReading
     var statusLineInstaller: any ClaudeStatusLineInstalling
+    var historyStore: any HistoryStoring
     var clock: any ClockProviding
 
     static func production() -> ProviderDiagnosticsEnvironment {
@@ -289,6 +290,7 @@ struct ProviderDiagnosticsEnvironment: Sendable {
             codexLocator: CodexAppServerRuntimeLocator(overrides: overrides),
             usageCache: ClaudeUsageCacheStore(),
             statusLineInstaller: ClaudeStatusLineInstaller(),
+            historyStore: LocalHistoryStore(),
             clock: SystemClock()
         )
     }
@@ -331,6 +333,7 @@ enum ProviderDiagnosticsCommand {
 
         let claudeHealthy = await diagnoseClaude(environment: environment, output: output)
         let codexHealthy = await diagnoseCodex(environment: environment, output: output)
+        await diagnoseHistory(environment: environment, output: output)
 
         output("")
         output("Summary: Claude \(claudeHealthy ? "OK" : "NOT OK"), Codex \(codexHealthy ? "OK" : "NOT OK")")
@@ -417,6 +420,36 @@ enum ProviderDiagnosticsCommand {
         let healthy = await reportSnapshot(from: provider, output: output)
         await client.shutdown()
         return healthy
+    }
+
+    /// Read-only: shows whether the 7-day chart and meter details have readings to draw.
+    private static func diagnoseHistory(
+        environment: ProviderDiagnosticsEnvironment,
+        output: @escaping @Sendable (String) -> Void
+    ) async {
+        output("")
+        output("History")
+        let now = environment.clock.now
+        do {
+            let started = ContinuousClock.now
+            let snapshots = try await environment.historyStore.snapshots(
+                since: now.addingTimeInterval(-UsageAnalytics.weeklyChartWindow)
+            )
+            let elapsed = ContinuousClock.now - started
+            output("  Polls with readings in the last 7 days: \(snapshots.count) (loaded in \(elapsed.components.seconds * 1000 + elapsed.components.attoseconds / 1_000_000_000_000_000) ms)")
+            for kind in MeterKind.allCases {
+                let count = UsageAnalytics.samples(for: kind, in: snapshots).count
+                if count > 0 {
+                    output("    \(kind.displayName): \(count) readings")
+                }
+            }
+            let series = UsagePresentation.historySeries(from: snapshots, now: now)
+            output(series.isEmpty
+                ? "  7-day chart: no lines yet (needs two readings of a Claude weekly meter)"
+                : "  7-day chart: " + series.map { "\($0.title) (\($0.points.count) points)" }.joined(separator: ", "))
+        } catch {
+            output("  Could not read history (\(describe(error)))")
+        }
     }
 
     private static func report(

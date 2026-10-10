@@ -137,7 +137,7 @@ final class StatusItemControllerTests: XCTestCase {
     }
 
     func testGaugeTrackRemainsVisibleAcrossUpperHalfAtMenuBarSize() throws {
-        let image = StatusItemGaugeRenderer.image(utilization: 5, color: .white)
+        let image = StatusItemGaugeRenderer.glyphImage(utilization: 5)
         let representation = try XCTUnwrap(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
         let fullHeight = 0..<representation.pixelsHigh
         let bitmapTopHalf = (representation.pixelsHigh / 2)..<representation.pixelsHigh
@@ -148,7 +148,7 @@ final class StatusItemControllerTests: XCTestCase {
             (thirdWidth * 2)..<representation.pixelsWide
         ]
 
-        XCTAssertEqual(image.size, NSSize(width: 18, height: 14))
+        XCTAssertEqual(image.size, NSSize(width: 16, height: 16))
         XCTAssertGreaterThan(
             visiblePixelCount(
                 in: representation,
@@ -186,22 +186,53 @@ final class StatusItemControllerTests: XCTestCase {
         for (stateName, snapshot) in samples {
             let controller = StatusItemController(store: makeStore(snapshot: snapshot))
             let button = try XCTUnwrap(controller.statusItem.button)
-            XCTAssertFalse(try XCTUnwrap(button.image).isTemplate)
+            let isCritical = stateName == "critical"
+            XCTAssertEqual(
+                try XCTUnwrap(button.image).isTemplate,
+                !isCritical,
+                "Only the critical capsule may opt out of menu-bar tinting (\(stateName))"
+            )
+            XCTAssertEqual(controller.statusItem.length, NSStatusItem.variableLength)
+            if isCritical {
+                XCTAssertEqual(button.title, "", "The critical capsule carries its own percentage")
+            } else {
+                XCTAssertEqual(button.title, UsagePresentation.statusItem(for: snapshot).percentText)
+                XCTAssertEqual(
+                    button.attributedTitle.attribute(.font, at: 0, effectiveRange: nil) as? NSFont,
+                    StatusItemGaugeRenderer.font
+                )
+            }
 
             for (appearanceName, appearanceNameValue, backgroundColor) in appearances {
                 let appearance = try XCTUnwrap(NSAppearance(named: appearanceNameValue))
-                let data = try statusButtonEvidence(
+                let bitmap = try statusButtonEvidence(
                     button,
                     appearance: appearance,
                     backgroundColor: backgroundColor
                 )
+                XCTAssertGreaterThan(
+                    contrastingPixelCount(in: bitmap, background: backgroundColor),
+                    120,
+                    "The \(stateName) status item is not legible on a \(appearanceName) menu bar"
+                )
+                let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
                 let destination = outputDirectory.appendingPathComponent(
                     "status-item-\(stateName)-\(appearanceName)@2x.png"
                 )
                 try data.write(to: destination, options: .atomic)
-                XCTAssertGreaterThan(data.count, 500)
             }
         }
+    }
+
+    func testWarningPercentageIsAmberWhileTheGlyphStaysMonochrome() throws {
+        let controller = StatusItemController(store: makeStore(snapshot: UsageMonitorFixtures.warningSnapshot))
+        let button = try XCTUnwrap(controller.statusItem.button)
+
+        XCTAssertTrue(try XCTUnwrap(button.image).isTemplate)
+        XCTAssertEqual(
+            button.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor,
+            UsagePalette.statusWarning
+        )
     }
 
     func testContextMenuOrderShortcutsAndLaunchCheckmark() {
@@ -235,7 +266,7 @@ final class StatusItemControllerTests: XCTestCase {
         _ button: NSStatusBarButton,
         appearance: NSAppearance,
         backgroundColor: NSColor
-    ) throws -> Data {
+    ) throws -> NSBitmapImageRep {
         let buttonSize = button.bounds.size
         XCTAssertGreaterThan(buttonSize.width, 18)
         XCTAssertGreaterThanOrEqual(buttonSize.height, 22)
@@ -256,10 +287,8 @@ final class StatusItemControllerTests: XCTestCase {
         evidenceButton.imagePosition = button.imagePosition
         evidenceButton.isBordered = button.isBordered
         evidenceButton.image = button.image
+        evidenceButton.imageHugsTitle = button.imageHugsTitle
         evidenceButton.attributedTitle = button.attributedTitle
-        evidenceButton.wantsLayer = true
-        evidenceButton.layer?.cornerRadius = button.layer?.cornerRadius ?? 0
-        evidenceButton.layer?.backgroundColor = button.layer?.backgroundColor
         canvas.addSubview(evidenceButton)
         canvas.layoutSubtreeIfNeeded()
         canvas.displayIfNeeded()
@@ -281,7 +310,26 @@ final class StatusItemControllerTests: XCTestCase {
         appearance.performAsCurrentDrawingAppearance {
             canvas.cacheDisplay(in: canvas.bounds, to: canvasBitmap)
         }
-        return try XCTUnwrap(canvasBitmap.representation(using: .png, properties: [:]))
+        return canvasBitmap
+    }
+
+    private func contrastingPixelCount(in bitmap: NSBitmapImageRep, background: NSColor) -> Int {
+        let backgroundRGB = background.usingColorSpace(.deviceRGB) ?? background
+        var count = 0
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                guard let pixel = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else {
+                    continue
+                }
+                let contrast = abs(pixel.redComponent - backgroundRGB.redComponent)
+                    + abs(pixel.greenComponent - backgroundRGB.greenComponent)
+                    + abs(pixel.blueComponent - backgroundRGB.blueComponent)
+                if contrast > 0.6 {
+                    count += 1
+                }
+            }
+        }
+        return count
     }
 
     private func assertContextMenu(

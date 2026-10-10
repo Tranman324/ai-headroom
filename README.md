@@ -4,7 +4,7 @@ A native macOS menu-bar app that shows how much of your **Claude** and **OpenAI 
 usage limits you have left, how fast you are burning them, and whether you will run out
 before the window resets.
 
-The app bundle is named **AI Usage Monitor**. Native Swift with no third-party dependencies, local-only storage, and 196 XCTest unit tests plus fixture-driven UI tests.
+The app bundle is named **AI Usage Monitor**. Native Swift with no third-party dependencies, local-only storage, and 207 XCTest unit tests plus fixture-driven UI tests.
 
 ## Why it exists
 
@@ -15,7 +15,9 @@ pace, do you hit 100% before reset?
 
 ## What it shows
 
-- **Menu-bar gauge** for the hottest meter. Normal below 70%, amber at 70%, red at 90%.
+- **Menu-bar gauge** for the hottest meter: a monochrome gauge and percentage below 70%,
+  an amber percentage from 70%, and a red capsule from 90%. The gauge is a template image,
+  so the menu bar tints it like its own icons on any wallpaper.
 - **Popover** with each provider's meters, reset countdowns, and a 7-day history chart.
 - **Meter detail** with a 30-minute burn rate, a projection line to 100%, and
   24h / 3d / 7d ranges.
@@ -178,7 +180,7 @@ credentials or `~/.ai-usage/`.
 
 It lists every CLI location checked and whether its signature is trusted, which
 binary is used, the sign-in state, the live Claude `get_usage` result, the status-line
-cache, and the meters the app would show. It prints only paths, plan names,
+cache, the meters the app would show, and how many readings the 7-day history has. It prints only paths, plan names,
 percentages, and reset times, never tokens or account details. It exits 0 when both
 providers return meters.
 

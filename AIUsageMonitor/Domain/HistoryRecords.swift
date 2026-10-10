@@ -25,6 +25,76 @@ enum UsageHistoryRecord: Equatable, Sendable {
     }
 }
 
+/// Rebuilds the per-poll snapshots that charts, burn rates, and projections read from history.
+enum HistorySnapshotAssembler {
+    /// Codex's rolling session window is five hours, so no session reading can reset later than this.
+    static let sessionResetHorizon: TimeInterval = 24 * 60 * 60
+
+    static func snapshots(from records: [UsageHistoryRecord]) -> [CombinedUsageSnapshot] {
+        var snapshots: [CombinedUsageSnapshot] = []
+        var providersByPoll: [Date: [ProviderID: ProviderUsageSnapshot]] = [:]
+        for record in records {
+            switch record {
+            case let .combinedSnapshot(record):
+                snapshots.append(CombinedUsageSnapshot(
+                    capturedAt: record.capturedAt,
+                    providers: record.snapshot.providers.map {
+                        normalizedLegacyMeters($0, capturedAt: record.capturedAt)
+                    }
+                ))
+            case let .providerSnapshot(record):
+                // The poller writes one record per provider, stamped with the poll time. A stale
+                // snapshot repeats an older reading, so only fresh ones become samples.
+                guard record.snapshot.health.kind == .fresh, !record.snapshot.meters.isEmpty else {
+                    continue
+                }
+                providersByPoll[record.capturedAt, default: [:]][record.provider] =
+                    normalizedLegacyMeters(record.snapshot, capturedAt: record.capturedAt)
+            case .providerFailure:
+                continue
+            }
+        }
+        snapshots += providersByPoll.map { capturedAt, providers in
+            CombinedUsageSnapshot(
+                capturedAt: capturedAt,
+                providers: ProviderID.allCases.compactMap { providers[$0] }
+            )
+        }
+        return snapshots.sorted { $0.capturedAt < $1.capturedAt }
+    }
+
+    /// Builds before window-length labelling stored Codex's weekly-only limit as `codexSession`.
+    /// A reading that resets more than a day after it was taken is weekly, so it is relabelled on
+    /// read; the history file itself is left untouched so older builds can still read it.
+    static func normalizedLegacyMeters(_ snapshot: ProviderUsageSnapshot, capturedAt: Date) -> ProviderUsageSnapshot {
+        guard snapshot.provider == .codex else {
+            return snapshot
+        }
+        let hasGenuineWeekly = snapshot.meters.contains { $0.kind == .codexWeek }
+        var meters: [UsageMeterSnapshot] = []
+        for meter in snapshot.meters {
+            guard meter.kind == .codexSession,
+                  meter.resetAt.timeIntervalSince(capturedAt) > sessionResetHorizon else {
+                meters.append(meter)
+                continue
+            }
+            // A genuine weekly reading wins over a relabelled one.
+            guard !hasGenuineWeekly, !meters.contains(where: { $0.kind == .codexWeek }) else {
+                continue
+            }
+            var display = MeterDisplayMetadata(kind: .codexWeek)
+            display.planName = meter.display.planName
+            meters.append(UsageMeterSnapshot(
+                kind: .codexWeek,
+                utilization: meter.utilization,
+                resetAt: meter.resetAt,
+                display: display
+            ))
+        }
+        return ProviderUsageSnapshot(provider: snapshot.provider, meters: meters, health: snapshot.health)
+    }
+}
+
 struct CombinedSnapshotHistoryRecord: Codable, Equatable, Sendable {
     var schemaVersion: Int
     var capturedAt: Date

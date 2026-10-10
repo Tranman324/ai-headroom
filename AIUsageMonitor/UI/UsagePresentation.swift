@@ -6,9 +6,9 @@ struct StatusItemPresentation {
     var accessibilityLabel: String
     var utilization: Double?
     var band: UsageStatusBand
-    var iconColor: NSColor
-    var textColor: NSColor
-    var backgroundColor: NSColor?
+    /// Nil draws the percentage in the menu bar's own text colour, like the clock. The gauge
+    /// glyph is always monochrome outside the critical capsule.
+    var textColor: NSColor?
     var showsCriticalCapsule: Bool
 }
 
@@ -107,6 +107,8 @@ enum UsagePresentation {
         }
     }
 
+    /// Follows the prototype: below 70% a monochrome glyph and percentage, from 70% an amber
+    /// percentage, and from 90% a filled red capsule.
     static func statusItem(for snapshot: CombinedUsageSnapshot) -> StatusItemPresentation {
         guard let hottestMeter = snapshot.hottestMeter else {
             return StatusItemPresentation(
@@ -114,9 +116,7 @@ enum UsagePresentation {
                 accessibilityLabel: "AI Usage no data",
                 utilization: nil,
                 band: .normal,
-                iconColor: UsagePalette.statusMutedText,
-                textColor: UsagePalette.statusMutedText,
-                backgroundColor: nil,
+                textColor: nil,
                 showsCriticalCapsule: false
             )
         }
@@ -132,9 +132,7 @@ enum UsagePresentation {
                 accessibilityLabel: "AI Usage \(percentText), normal",
                 utilization: utilization,
                 band: band,
-                iconColor: UsagePalette.statusAccent,
-                textColor: UsagePalette.statusText,
-                backgroundColor: nil,
+                textColor: nil,
                 showsCriticalCapsule: false
             )
         case .warning:
@@ -143,9 +141,7 @@ enum UsagePresentation {
                 accessibilityLabel: "AI Usage \(percentText), warning",
                 utilization: utilization,
                 band: band,
-                iconColor: UsagePalette.statusWarning,
                 textColor: UsagePalette.statusWarning,
-                backgroundColor: nil,
                 showsCriticalCapsule: false
             )
         case .critical:
@@ -154,9 +150,7 @@ enum UsagePresentation {
                 accessibilityLabel: "AI Usage \(percentText), critical",
                 utilization: utilization,
                 band: band,
-                iconColor: UsagePalette.critical,
-                textColor: UsagePalette.critical,
-                backgroundColor: UsagePalette.critical.withAlphaComponent(0.18),
+                textColor: .white,
                 showsCriticalCapsule: true
             )
         }

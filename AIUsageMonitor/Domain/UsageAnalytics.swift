@@ -68,6 +68,13 @@ enum UsageAnalytics {
     static let sessionChartWindow: TimeInterval = 24 * 60 * 60
     static let weeklyChartWindow: TimeInterval = 7 * 24 * 60 * 60
     static let defaultChartTargetPointCount = 44
+    /// Providers can report the same reset a fraction of a second apart between reads, while a
+    /// real reset moves it by hours, so reset times this close describe the same window.
+    static let resetTimeTolerance: TimeInterval = 10 * 60
+
+    static func isSameResetWindow(_ lhs: Date, _ rhs: Date) -> Bool {
+        abs(lhs.timeIntervalSince(rhs)) <= resetTimeTolerance
+    }
 
     static func samples(for kind: MeterKind, in snapshots: [CombinedUsageSnapshot]) -> [MeterHistorySample] {
         snapshots.flatMap { snapshot in
@@ -111,7 +118,7 @@ enum UsageAnalytics {
 
         var currentResetSegment: [MeterHistorySample] = []
         for sample in recentSamples.reversed() {
-            guard sample.resetAt == latest.resetAt && sample.capturedAt <= latest.capturedAt else {
+            guard isSameResetWindow(sample.resetAt, latest.resetAt) && sample.capturedAt <= latest.capturedAt else {
                 break
             }
             currentResetSegment.insert(sample, at: 0)
@@ -242,7 +249,7 @@ enum UsageAnalytics {
         for index in 1 ..< samples.count {
             let previous = samples[index - 1]
             let current = samples[index]
-            if previous.resetAt != current.resetAt || current.utilization.value < previous.utilization.value {
+            if !isSameResetWindow(previous.resetAt, current.resetAt) || current.utilization.value < previous.utilization.value {
                 indexes.insert(index - 1)
                 indexes.insert(index)
             }

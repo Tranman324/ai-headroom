@@ -205,9 +205,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         self.eventView = eventView
 
         button.imagePosition = .imageLeading
+        button.imageHugsTitle = true
         button.isBordered = false
-        button.wantsLayer = true
-        button.layer?.cornerRadius = 11
         button.identifier = NSUserInterfaceItemIdentifier("status-item-button")
     }
 
@@ -243,19 +242,29 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         }
 
         let presentation = UsagePresentation.statusItem(for: snapshot)
-        statusItem.length = presentation.showsCriticalCapsule ? 68 : 60
-        button.image = StatusItemGaugeRenderer.image(
-            utilization: presentation.utilization ?? 0,
-            color: presentation.iconColor
-        )
-        button.attributedTitle = NSAttributedString(
-            string: presentation.percentText,
-            attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
-                .foregroundColor: presentation.textColor
-            ]
-        )
-        button.layer?.backgroundColor = presentation.backgroundColor?.deviceRGBColor.cgColor
+        statusItem.length = NSStatusItem.variableLength
+        if presentation.showsCriticalCapsule, let utilization = presentation.utilization {
+            button.image = StatusItemGaugeRenderer.criticalCapsuleImage(
+                utilization: utilization,
+                text: presentation.percentText
+            )
+            button.title = ""
+        } else {
+            button.image = StatusItemGaugeRenderer.glyphImage(utilization: presentation.utilization)
+            if let textColor = presentation.textColor {
+                button.attributedTitle = NSAttributedString(
+                    string: presentation.percentText,
+                    attributes: [
+                        .font: StatusItemGaugeRenderer.font,
+                        .foregroundColor: textColor
+                    ]
+                )
+            } else {
+                // A plain title gets the same menu-bar styling as the clock and system items.
+                button.font = StatusItemGaugeRenderer.font
+                button.title = presentation.percentText
+            }
+        }
         button.toolTip = presentation.accessibilityLabel
         button.setAccessibilityLabel(presentation.accessibilityLabel)
     }

@@ -1047,7 +1047,7 @@ struct ClaudeUsageProvider: UsageProviderFetching, ProviderAuthenticationManagin
             guard meters[kind] == nil,
                   let window,
                   let utilization = window.utilization,
-                  let resetAt = window.resetsAt else {
+                  let reportedResetAt = window.resetsAt else {
                 return
             }
             guard utilization.isFinite, utilization >= 0 else {
@@ -1057,6 +1057,9 @@ struct ClaudeUsageProvider: UsageProviderFetching, ProviderAuthenticationManagin
                 }
                 throw ProviderClientFailure.malformedResponse(provider: provider)
             }
+            // The plan endpoint jitters reset times by fractions of a second between reads; resets
+            // fall on whole minutes, so rounding keeps one window's samples comparable.
+            let resetAt = Date(timeIntervalSince1970: (reportedResetAt.timeIntervalSince1970 / 60).rounded() * 60)
             guard resetAt > clock.now else {
                 return
             }

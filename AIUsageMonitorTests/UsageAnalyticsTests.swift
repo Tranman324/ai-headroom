@@ -155,4 +155,38 @@ final class UsageAnalyticsTests: XCTestCase {
     private func isStrictlyOrdered(_ dates: [Date]) -> Bool {
         zip(dates, dates.dropFirst()).allSatisfy { $0 < $1 }
     }
+
+    func testSubSecondResetJitterIsOneWindowForBurnRateAndCharts() throws {
+        // Claude's plan endpoint reports the same reset a fraction of a second apart on each read.
+        let base = UsageMonitorFixtures.baseDate
+        let reset = base.addingTimeInterval(3 * 86_400)
+        let jitter: [TimeInterval] = [-0.053, 0.061, 0.338, -0.012, 0.150]
+        let samples = try jitter.enumerated().map { index, offset in
+            MeterHistorySample(
+                kind: .claudeWeekAll,
+                capturedAt: base.addingTimeInterval(Double(index) * 5 * 60),
+                utilization: try UtilizationPercentage(60 + Double(index)),
+                resetAt: reset.addingTimeInterval(offset)
+            )
+        }
+
+        let burnRate = UsageAnalytics.burnRate(for: samples)
+        let points = UsageAnalytics.downsample(samples: samples, kind: .claudeWeekAll)
+
+        XCTAssertEqual(burnRate.status, .available)
+        XCTAssertEqual(burnRate.pointsPerHour, 12, accuracy: 0.001)
+        XCTAssertFalse(points.contains { $0.preservesResetDiscontinuity })
+    }
+
+    func testARealResetIsStillADiscontinuity() throws {
+        let base = UsageMonitorFixtures.baseDate
+        let samples = [
+            MeterHistorySample(kind: .claudeSession, capturedAt: base, utilization: try UtilizationPercentage(80), resetAt: base.addingTimeInterval(600)),
+            MeterHistorySample(kind: .claudeSession, capturedAt: base.addingTimeInterval(900), utilization: try UtilizationPercentage(5), resetAt: base.addingTimeInterval(5 * 3600 + 900))
+        ]
+
+        XCTAssertFalse(UsageAnalytics.isSameResetWindow(samples[0].resetAt, samples[1].resetAt))
+        XCTAssertEqual(UsageAnalytics.burnRate(for: samples).status, .resetDiscontinuity)
+        XCTAssertTrue(UsageAnalytics.downsample(samples: samples, kind: .claudeSession).allSatisfy(\.preservesResetDiscontinuity))
+    }
 }

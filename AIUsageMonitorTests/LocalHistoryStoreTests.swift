@@ -302,6 +302,129 @@ final class LocalHistoryStoreTests: XCTestCase {
         try assertMode(0o600, at: store.historyFileURL)
     }
 
+    func testPollerProviderRecordsBecomeHistorySnapshotsTheChartCanDraw() async throws {
+        // This is what the app actually writes: one record per provider per poll, never a
+        // combined record. History used to come back empty because only combined records were read.
+        let store = makeStore(root: try temporaryRoot())
+        let start = UsageMonitorFixtures.baseDate
+        for poll in 0 ..< 6 {
+            let capturedAt = start.addingTimeInterval(Double(poll) * 3 * 60)
+            try await store.appendProviderSnapshot(
+                providerSnapshot(.claude, kinds: [.claudeWeekAll, .claudeWeekFable], percent: 40 + Double(poll), capturedAt: capturedAt),
+                capturedAt: capturedAt
+            )
+            try await store.appendProviderSnapshot(
+                providerSnapshot(.codex, kinds: [.codexWeek], percent: 20 + Double(poll), capturedAt: capturedAt),
+                capturedAt: capturedAt
+            )
+        }
+        try await store.appendProviderFailure(
+            provider: .codex,
+            at: start.addingTimeInterval(19 * 60),
+            error: SanitizedProviderError(code: .unavailable, displayMessage: "Codex CLI was not found.")
+        )
+
+        let snapshots = try await store.snapshots(since: .distantPast)
+        let series = UsagePresentation.historySeries(from: snapshots, now: start.addingTimeInterval(20 * 60))
+
+        XCTAssertEqual(snapshots.count, 6, "One snapshot per poll; failures add none")
+        XCTAssertEqual(snapshots.first?.providers.map(\.provider), [.claude, .codex])
+        XCTAssertEqual(snapshots.map(\.capturedAt), snapshots.map(\.capturedAt).sorted())
+        XCTAssertEqual(UsageAnalytics.samples(for: .codexWeek, in: snapshots).map(\.utilization.value), [20, 21, 22, 23, 24, 25])
+        XCTAssertEqual(series.map(\.id), [MeterKind.claudeWeekAll.rawValue, MeterKind.claudeWeekFable.rawValue])
+    }
+
+    func testStaleAndEmptyProviderSnapshotsAreNotHistorySamples() async throws {
+        let store = makeStore(root: try temporaryRoot())
+        let capturedAt = UsageMonitorFixtures.baseDate
+        let stale = providerSnapshot(.claude, kinds: [.claudeWeekAll], percent: 50, capturedAt: capturedAt)
+        try await store.appendProviderSnapshot(
+            ProviderUsageSnapshot(
+                provider: .claude,
+                meters: stale.meters,
+                health: .stale(checkedAt: capturedAt, staleSince: capturedAt.addingTimeInterval(-3600))
+            ),
+            capturedAt: capturedAt
+        )
+        try await store.appendProviderSnapshot(
+            ProviderUsageSnapshot(provider: .codex, meters: [], health: .fresh(checkedAt: capturedAt)),
+            capturedAt: capturedAt
+        )
+
+        let snapshots = try await store.snapshots(since: .distantPast)
+
+        XCTAssertTrue(snapshots.isEmpty, "A stale fallback repeats an older reading and must not be charted as current")
+    }
+
+    func testLegacyCodexWeeklyReadingsLabelledAsSessionAreReadAsWeekly() async throws {
+        let store = makeStore(root: try temporaryRoot())
+        let capturedAt = UsageMonitorFixtures.baseDate
+        let legacyWeekly = UsageMeterSnapshot(
+            kind: .codexSession,
+            utilization: try UtilizationPercentage(44),
+            resetAt: capturedAt.addingTimeInterval(3 * 24 * 60 * 60),
+            display: MeterDisplayMetadata(title: "Codex Session", providerName: "Codex", planName: "Pro 5x", windowName: "Rolling 5 hours")
+        )
+        let realSession = UsageMeterSnapshot(
+            kind: .codexSession,
+            utilization: try UtilizationPercentage(10),
+            resetAt: capturedAt.addingTimeInterval(4 * 60 * 60)
+        )
+        try await store.appendProviderSnapshot(
+            ProviderUsageSnapshot(provider: .codex, meters: [legacyWeekly], health: .fresh(checkedAt: capturedAt)),
+            capturedAt: capturedAt
+        )
+        let later = capturedAt.addingTimeInterval(180)
+        try await store.appendProviderSnapshot(
+            ProviderUsageSnapshot(provider: .codex, meters: [realSession], health: .fresh(checkedAt: later)),
+            capturedAt: later
+        )
+
+        let snapshots = try await store.snapshots(since: .distantPast)
+        let relabelled = try XCTUnwrap(snapshots.first?.meters.first)
+
+        XCTAssertEqual(relabelled.kind, .codexWeek)
+        XCTAssertEqual(relabelled.display.title, "Codex Week")
+        XCTAssertEqual(relabelled.display.planName, "Pro 5x")
+        XCTAssertEqual(relabelled.utilization.value, 44)
+        XCTAssertEqual(snapshots.last?.meters.first?.kind, .codexSession, "A genuine five-hour window keeps its label")
+        let latest = try await store.latestUsableProviderSnapshots()
+        XCTAssertEqual(latest[.codex]?.meters.first?.kind, .codexSession)
+        let onDisk = try String(contentsOf: store.historyFileURL, encoding: .utf8)
+        XCTAssertFalse(onDisk.contains("codexWeek"), "Relabelling happens on read; the file stays readable by older builds")
+    }
+
+    func testRelabelledLegacyReadingNeverDuplicatesAGenuineWeeklyMeter() {
+        let capturedAt = UsageMonitorFixtures.baseDate
+        let snapshot = ProviderUsageSnapshot(
+            provider: .codex,
+            meters: [
+                UsageMeterSnapshot(kind: .codexSession, utilization: try! UtilizationPercentage(44), resetAt: capturedAt.addingTimeInterval(3 * 86_400)),
+                UsageMeterSnapshot(kind: .codexWeek, utilization: try! UtilizationPercentage(45), resetAt: capturedAt.addingTimeInterval(3 * 86_400))
+            ],
+            health: .fresh(checkedAt: capturedAt)
+        )
+
+        let normalized = HistorySnapshotAssembler.normalizedLegacyMeters(snapshot, capturedAt: capturedAt)
+
+        XCTAssertEqual(normalized.meters.map(\.kind), [.codexWeek])
+        XCTAssertEqual(normalized.meters.first?.utilization.value, 45)
+    }
+
+    private func providerSnapshot(_ provider: ProviderID, kinds: [MeterKind], percent: Double, capturedAt: Date) -> ProviderUsageSnapshot {
+        ProviderUsageSnapshot(
+            provider: provider,
+            meters: kinds.map {
+                UsageMeterSnapshot(
+                    kind: $0,
+                    utilization: try! UtilizationPercentage(percent),
+                    resetAt: UsageMonitorFixtures.baseDate.addingTimeInterval(3 * 86_400)
+                )
+            },
+            health: .fresh(checkedAt: capturedAt)
+        )
+    }
+
     private func makeStore(root: URL, clock: any ClockProviding = FixedClock(now: UsageMonitorFixtures.baseDate)) -> LocalHistoryStore {
         LocalHistoryStore(rootProvider: FixedStorageRootProvider(storageRoot: root), clock: clock)
     }

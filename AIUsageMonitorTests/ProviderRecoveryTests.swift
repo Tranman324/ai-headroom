@@ -214,6 +214,7 @@ final class ProviderRecoveryTests: XCTestCase {
                 rootProvider: FixedStorageRootProvider(storageRoot: makeTemporaryDirectory()),
                 executableURL: URL(fileURLWithPath: "/Applications/AI Usage Monitor.app/Contents/MacOS/AI Usage Monitor")
             ),
+            historyStore: InMemoryHistoryStore(initialSnapshots: []),
             clock: FixedClock(now: Date(timeIntervalSince1970: 1_783_756_800))
         )
 
@@ -266,6 +267,7 @@ final class ProviderRecoveryTests: XCTestCase {
                 rootProvider: FixedStorageRootProvider(storageRoot: makeTemporaryDirectory()),
                 executableURL: URL(fileURLWithPath: "/Applications/AI Usage Monitor.app/Contents/MacOS/AI Usage Monitor")
             ),
+            historyStore: InMemoryHistoryStore(initialSnapshots: []),
             clock: FixedClock(now: Date(timeIntervalSince1970: 1_783_756_800))
         )
 
@@ -281,6 +283,8 @@ final class ProviderRecoveryTests: XCTestCase {
             "Claude Week: 81% used",
             "Account: connected plan=Pro 5x",
             "Codex Week: 44% used",
+            "History",
+            "7-day chart: no lines yet",
             "Summary: Claude OK, Codex OK"
         ] {
             XCTAssertTrue(report.contains(expected), "Missing \"\(expected)\" in:\n\(report)")
