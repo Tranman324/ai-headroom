@@ -133,6 +133,20 @@ final class ProviderCardPresentationTests: XCTestCase {
         XCTAssertEqual(estimate?.basis, "last 3h")
     }
 
+    func testOneGlitchReadingDoesNotDecideThePace() {
+        // A climb from 30 to 45% over three hours, but the window's first reading glitched to 46%.
+        // Comparing only the first and last readings would call this "No usage".
+        let reset = now.addingTimeInterval(6 * 3600)
+        var history = Scenario.history(.claudeWeekAll, current: 45, perHour: 5, span: 2.75, now: now, reset: reset)
+        history.append(Scenario.snapshot(now: now.addingTimeInterval(-3 * 3600 + 60), claude: [(.claudeWeekAll, 46, reset)], codex: []))
+        let snapshot = Scenario.snapshot(now: now, claude: [(.claudeWeekAll, 45, reset)], codex: [])
+
+        let estimate = ProviderCardPresenter.card(provider: .claude, snapshot: snapshot, history: history, connection: nil, alertThreshold: 80, timeZone: newYork).estimate
+
+        XCTAssertNotEqual(estimate?.tone, .idle)
+        XCTAssertNotEqual(estimate?.tone, .noData)
+    }
+
     func testEstimateTimesRoundDownAndNameTheDateWhenAWeekAway() {
         let at558 = Date(timeIntervalSince1970: 1_791_669_480) // 5:58 PM
         let sixDaysOut = now.addingTimeInterval(6.5 * 86_400)

@@ -4,7 +4,7 @@ A native macOS menu-bar app that shows how much of your **Claude** and **OpenAI 
 usage limits you have left, how fast you are burning them, and whether you will run out
 before the window resets.
 
-The app bundle is named **AI Usage Monitor**. Native Swift with no third-party dependencies, local-only storage, and 256 XCTest unit tests plus fixture-driven UI tests.
+The app bundle is named **AI Usage Monitor**. Native Swift with no third-party dependencies, local-only storage, and 257 XCTest unit tests plus fixture-driven UI tests.
 
 ## Why it exists
 
