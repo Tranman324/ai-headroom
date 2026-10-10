@@ -117,6 +117,12 @@ final class UsageMonitorStore: ObservableObject {
             authenticationObservationTask?.cancel()
             authenticationObservationTask = nil
             cancelProviderAuthentication()
+        case .showProviderConnections:
+            navigation.isSettingsPresented = true
+            navigation.isProviderConnectionsPresented = true
+            providerAuthenticationChallenge = nil
+            providerConnectionError = nil
+            await refreshProviderConnections()
         case .openProviderConnections:
             navigation.isProviderConnectionsPresented = true
             providerAuthenticationChallenge = nil

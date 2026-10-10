@@ -275,7 +275,9 @@ private struct UsageListScreen: View {
     private var updatedText: String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "h:mm:ss a"
+        formatter.dateFormat = Calendar.autoupdatingCurrent.isDateInToday(store.snapshot.capturedAt)
+            ? "h:mm:ss a"
+            : "MMM d h:mm:ss a"
         return formatter.string(from: store.snapshot.capturedAt)
     }
 }
@@ -326,16 +328,19 @@ private struct ProviderCardView: View {
         .accessibilityIdentifier("\(card.provider.rawValue)-provider-section")
     }
 
-    /// Badges never wrap; if a narrow layout cannot fit everything, the countdown goes first.
+    /// Badges never wrap and nothing may push past the popover edge: narrower layouts drop the
+    /// countdown, then the plan badge, and the last resort lets the reset text truncate.
     private var header: some View {
         ViewThatFits(in: .horizontal) {
-            headerRow(showsCountdown: true)
-            headerRow(showsCountdown: false)
+            headerRow(showsCountdown: true, showsPlan: true, fixedReset: true)
+            headerRow(showsCountdown: false, showsPlan: true, fixedReset: true)
+            headerRow(showsCountdown: false, showsPlan: false, fixedReset: true)
+            headerRow(showsCountdown: false, showsPlan: false, fixedReset: false)
         }
         .frame(minHeight: 18)
     }
 
-    private func headerRow(showsCountdown: Bool) -> some View {
+    private func headerRow(showsCountdown: Bool, showsPlan: Bool, fixedReset: Bool) -> some View {
         HStack(spacing: 5) {
             Text(card.title)
                 .font(.system(size: 10.5, weight: .semibold))
@@ -343,7 +348,7 @@ private struct ProviderCardView: View {
                 .foregroundStyle(UsagePalette.allModels.swiftUIColor)
                 .fixedSize()
 
-            if let plan = card.planBadge {
+            if showsPlan, let plan = card.planBadge {
                 Text(plan)
                     .font(.system(size: 8.5, weight: .semibold))
                     .tracking(0.4)
@@ -370,27 +375,32 @@ private struct ProviderCardView: View {
             Spacer(minLength: 0)
 
             if card.state == .normal || card.state == .stale, let lead = card.resetLead {
-                HStack(spacing: 4) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
-                    Text(lead)
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
-                    if showsCountdown, let countdown = card.resetCountdown {
-                        Text(countdown)
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
-                    }
-                }
-                .monospacedDigit()
-                .lineLimit(1)
-                .fixedSize()
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Resets \(lead), in \(card.resetCountdown ?? "")")
-                .accessibilityIdentifier("\(card.provider.rawValue)-reset-lead")
+                resetLabel(lead: lead, showsCountdown: showsCountdown)
+                    .fixedSize(horizontal: fixedReset, vertical: false)
             }
         }
+    }
+
+    private func resetLabel(lead: String, showsCountdown: Bool) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "clock")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+            Text(lead)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
+                .truncationMode(.tail)
+            if showsCountdown, let countdown = card.resetCountdown {
+                Text(countdown)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+            }
+        }
+        .monospacedDigit()
+        .lineLimit(1)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(card.resetCountdown.map { "Resets \(lead), in \($0)" } ?? "Resets \(lead)")
+        .accessibilityIdentifier("\(card.provider.rawValue)-reset-lead")
     }
 
     private func reasonBox(_ reason: String) -> some View {
@@ -554,9 +564,17 @@ private struct CardMeterBar: View {
 }
 
 private struct ResetCreditsRow: View {
+    static let maximumListedCredits = 6
+    static let rowHeight: CGFloat = 24
+
     var credits: ResetCreditsPresentation
 
-    @State private var isHovering = false
+    @Environment(\.showsResetCreditListForEvidence) private var showsListForEvidence
+    @State private var isHoveringRow = false
+    @State private var isHoveringList = false
+    @State private var isListOpen = false
+    @State private var hoveredCredit: Int?
+    @State private var closeTask: Task<Void, Never>?
 
     var body: some View {
         HStack(spacing: 6) {
@@ -570,24 +588,33 @@ private struct ResetCreditsRow: View {
 
             Spacer(minLength: 6)
 
-            Text(credits.expiryText)
+            // A blank expiry still reserves its line so the row height never jumps.
+            Text(credits.expiryText.isEmpty ? " " : credits.expiryText)
                 .font(.system(size: 9.5))
                 .foregroundStyle((credits.isExpiringSoon ? UsagePalette.warning : UsagePalette.mutedText).swiftUIColor)
         }
-        .padding(.top, 4)
-        .padding(.bottom, 7)
+        .frame(height: Self.rowHeight)
+        .padding(.bottom, 3)
         .contentShape(Rectangle())
         .background(
             RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(Color.white.opacity(isHovering ? 0.045 : 0))
+                .fill(Color.white.opacity(isHoveringRow ? 0.045 : 0))
                 .padding(.horizontal, -6)
         )
-        .onHover { isHovering = $0 }
-        .overlay(alignment: .topTrailing) {
-            if isHovering, !credits.credits.isEmpty {
+        .onHover { hovering in
+            isHoveringRow = hovering
+            updateListVisibility()
+        }
+        // Anchored to the row's bottom and lifted by one row, so the list rises above the row
+        // (overlapping it by two points) instead of covering the history and footer below.
+        .overlay(alignment: .bottomTrailing) {
+            if (isListOpen || showsListForEvidence), !credits.credits.isEmpty {
                 creditList
-                    .alignmentGuide(.top) { dimensions in dimensions[.bottom] - 2 }
-                    .transition(.opacity)
+                    .onHover { hovering in
+                        isHoveringList = hovering
+                        updateListVisibility()
+                    }
+                    .offset(y: -(Self.rowHeight + 3 - 2))
             }
         }
         .accessibilityElement(children: .ignore)
@@ -595,30 +622,77 @@ private struct ResetCreditsRow: View {
         .accessibilityIdentifier("codex-reset-credits")
     }
 
+    /// The list overlaps the row by two points, but the pointer still leaves one view before it
+    /// enters the other, so closing waits a moment for the other view to report the hover.
+    private func updateListVisibility() {
+        closeTask?.cancel()
+        if isHoveringRow || isHoveringList {
+            isListOpen = true
+            return
+        }
+        closeTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled, !isHoveringRow, !isHoveringList else {
+                return
+            }
+            isListOpen = false
+            hoveredCredit = nil
+        }
+    }
+
     private var creditList: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(credits.credits.enumerated()), id: \.offset) { _, credit in
-                HStack(spacing: 8) {
-                    Text(credit.title)
-                        .font(.system(size: 11))
-                        .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
-                    Spacer(minLength: 8)
-                    Text(credit.dateText)
-                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                        .underline(pattern: .dot, color: (credit.isExpiringSoon ? UsagePalette.warning : UsagePalette.primaryText).swiftUIColor.opacity(0.5))
-                        .foregroundStyle((credit.isExpiringSoon ? UsagePalette.warning : UsagePalette.primaryText).swiftUIColor)
-                        .help(credit.detail)
+        let listed = Array(credits.credits.prefix(Self.maximumListedCredits))
+        let hidden = credits.credits.count - listed.count
+        return VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(listed.enumerated()), id: \.offset) { index, credit in
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 8) {
+                        Text(credit.title)
+                            .font(.system(size: 11))
+                            .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
+                        Spacer(minLength: 8)
+                        Text(credit.dateText)
+                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                            .underline(pattern: .dot, color: dateColor(credit).swiftUIColor.opacity(0.5))
+                            .foregroundStyle(dateColor(credit).swiftUIColor)
+                    }
+                    if hoveredCredit == index || (showsListForEvidence && index == 0) {
+                        Text(credit.detail)
+                            .font(.system(size: 10))
+                            .foregroundStyle(dateColor(credit).swiftUIColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("codex-reset-credit-detail")
+                    }
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
+                .contentShape(Rectangle())
+                .onHover { hovering in
+                    if hovering {
+                        hoveredCredit = index
+                    } else if hoveredCredit == index {
+                        hoveredCredit = nil
+                    }
+                }
+            }
+            if hidden > 0 {
+                Text("+\(hidden) more")
+                    .font(.system(size: 10))
+                    .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
             }
         }
         .padding(.vertical, 4)
-        .frame(width: 190)
+        .frame(width: 210, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(UsagePalette.inset.swiftUIColor))
         .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(Color.white.opacity(0.1), lineWidth: 1))
         .shadow(color: .black.opacity(0.55), radius: 15, y: 10)
         .accessibilityIdentifier("codex-reset-credit-list")
+    }
+
+    private func dateColor(_ credit: ResetCreditsPresentation.Credit) -> NSColor {
+        credit.isExpiringSoon ? UsagePalette.warning : UsagePalette.primaryText
     }
 
     private var accessibilityText: String {
@@ -627,6 +701,18 @@ private struct ResetCreditsRow: View {
         }
         let details = credits.credits.map { "\($0.title), \($0.detail)" }.joined(separator: "; ")
         return "\(credits.countText) available, \(credits.expiryText). \(details)"
+    }
+}
+
+private struct ShowsResetCreditListForEvidenceKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Offscreen evidence renders open the reset-credit list the way a hover would.
+    var showsResetCreditListForEvidence: Bool {
+        get { self[ShowsResetCreditListForEvidenceKey.self] }
+        set { self[ShowsResetCreditListForEvidenceKey.self] = newValue }
     }
 }
 

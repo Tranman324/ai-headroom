@@ -4,7 +4,7 @@ A native macOS menu-bar app that shows how much of your **Claude** and **OpenAI 
 usage limits you have left, how fast you are burning them, and whether you will run out
 before the window resets.
 
-The app bundle is named **AI Usage Monitor**. Native Swift with no third-party dependencies, local-only storage, and 238 XCTest unit tests plus fixture-driven UI tests.
+The app bundle is named **AI Usage Monitor**. Native Swift with no third-party dependencies, local-only storage, and 256 XCTest unit tests plus fixture-driven UI tests.
 
 ## Why it exists
 
@@ -20,10 +20,13 @@ pace, do you hit 100% before reset?
   so the menu bar tints it like its own icons on any wallpaper.
 - **Popover** with one section per account: when its weekly limit resets ("tonight
   8:00 PM · 4h 15m"), its meters, and an estimate of when you'll hit the limit at your
-  current pace ("Hits 100% ~6:20 PM, before reset", based on the last 3 hours, or the
-  last 24 hours when the reset is days away). Codex also shows how many free rate-limit
+  current pace ("Hits 100% ~6:20 PM, before reset · last 3h"). The pace is a trend over the
+  last 3 hours when the reset is within a day, otherwise the last 24 hours, using only the
+  current reset window; it needs at least 45 minutes (or 6 hours for multi-day resets) of
+  readings before it projects, and the basis shows the span actually used. Codex also shows how many free rate-limit
   resets you have left and when they expire; hover for each one. Stale, error, and
-  not-connected accounts say why and offer Retry, Sign in, or Connect. A 7-day history
+  not-connected accounts say why and offer Retry, or Sign in / Connect, which open
+  Connections where the sign-in code is shown. A 7-day history
   chart sits below.
 - **Meter detail** with a 30-minute burn rate, a projection line to 100%, and
   24h / 3d / 7d ranges.

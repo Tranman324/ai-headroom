@@ -28,12 +28,14 @@ struct ProviderCardPresentation: Equatable {
             }
         }
 
+        /// Sign-in runs from Connections, which shows the device code and progress; starting it
+        /// from the usage list would open a browser with nowhere to show the code.
         func command(for provider: ProviderID) -> AppIntentCommand {
             switch self {
             case .retry:
                 return .refresh
             case .signIn, .connect:
-                return .startProviderAuthentication(provider)
+                return .showProviderConnections
             }
         }
     }
@@ -131,10 +133,13 @@ struct ResetCreditsPresentation: Equatable {
 }
 
 enum ProviderCardPresenter {
-    /// Recent pace for limits resetting within a day, daily pace for longer horizons.
+    /// Limits resetting within a day are paced over the last 3 hours, longer ones over the last
+    /// 24 hours, and each needs enough readings that a single 1% tick cannot drive the estimate.
+    static let shortHorizon: TimeInterval = 24 * 60 * 60
     static let shortPaceWindow: TimeInterval = 3 * 60 * 60
     static let longPaceWindow: TimeInterval = 24 * 60 * 60
-    static let minimumPaceSpan: TimeInterval = 20 * 60
+    static let minimumShortPaceSpan: TimeInterval = 45 * 60
+    static let minimumLongPaceSpan: TimeInterval = 6 * 60 * 60
     static let expiringSoonDays = 7
 
     static func card(
@@ -143,7 +148,7 @@ enum ProviderCardPresenter {
         history: [CombinedUsageSnapshot],
         connection: ProviderConnectionStatus?,
         alertThreshold: Double,
-        timeZone: TimeZone = .current
+        timeZone: TimeZone = .autoupdatingCurrent
     ) -> ProviderCardPresentation {
         let now = snapshot.capturedAt
         let providerSnapshot = snapshot.provider(provider)
@@ -194,9 +199,10 @@ enum ProviderCardPresenter {
             return card
         case .stale:
             card.state = .stale
-            let since = health.staleSince.map { "Last reading \(timeText($0, timeZone: timeZone))" } ?? "Last known values"
+            let since = health.staleSince.map { "Last reading \(momentText($0, now: now, timeZone: timeZone))" } ?? "Last known values"
             card.reason = "\(since) · \(health.error?.displayMessage ?? "showing last known values")"
-            card.reasonAction = .retry
+            // A signed-out account keeps its old readings, so Retry alone could never recover it.
+            card.reasonAction = health.error?.code == .unauthorized ? .signIn : .retry
         case .fresh, .noData:
             break
         }
@@ -207,7 +213,7 @@ enum ProviderCardPresenter {
         let mainMeters = ordered.filter { !modelKinds.contains($0.kind) }
         let primary = mainMeters.first { $0.kind.window == .weekly } ?? mainMeters.first
         let row = { (meter: UsageMeterSnapshot) in
-            meterRow(meter, isPrimary: meter.kind == primary?.kind, alertThreshold: alertThreshold, timeZone: timeZone)
+            meterRow(meter, isPrimary: meter.kind == primary?.kind, now: now, alertThreshold: alertThreshold, timeZone: timeZone)
         }
 
         card.leadingMeters = mainMeters.filter { $0.kind != primary?.kind }.map(row)
@@ -232,6 +238,7 @@ enum ProviderCardPresenter {
     static func meterRow(
         _ meter: UsageMeterSnapshot,
         isPrimary: Bool,
+        now: Date,
         alertThreshold: Double,
         timeZone: TimeZone
     ) -> MeterRowPresentation {
@@ -251,7 +258,7 @@ enum ProviderCardPresenter {
             percentColor = UsagePalette.critical
         }
         let isModelRow = [.claudeWeekFable, .claudeWeekSonnet, .claudeWeekHaiku].contains(meter.kind)
-        let trailing = !isPrimary && !isModelRow && meter.kind.window == .rollingFiveHours
+        let trailing = !isPrimary && !isModelRow && meter.kind.window == .rollingFiveHours && meter.resetAt > now
             ? timeText(meter.resetAt, timeZone: timeZone)
             : nil
         let percentText = "\(Int(value.rounded()))%"
@@ -263,7 +270,8 @@ enum ProviderCardPresenter {
             fraction: min(1, max(0, value / 100)),
             percentColor: percentColor,
             fillColor: fill,
-            glows: value >= alertThreshold,
+            // Per-model rows stay quiet, as in the design; the account's main meters carry the alert.
+            glows: !isModelRow && value >= alertThreshold,
             isModelRow: isModelRow,
             accessibilityLabel: "\(label(for: meter.kind)), \(percentText)"
                 + (trailing.map { ", resets \($0)" } ?? "")
@@ -289,22 +297,42 @@ enum ProviderCardPresenter {
 
     // MARK: - Reset wording
 
-    /// "tonight 8:00 PM" + "4h 15m", "Wed 12:21 AM" + "3d 8h".
-    static func resetLead(for resetAt: Date, now: Date, timeZone: TimeZone) -> (lead: String, countdown: String) {
-        let calendar = gregorian(timeZone)
-        let time = timeText(resetAt, timeZone: timeZone)
-        let lead: String
-        if calendar.isDate(resetAt, inSameDayAs: now) {
-            lead = calendar.component(.hour, from: resetAt) >= 17 ? "tonight \(time)" : "today \(time)"
-        } else if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now),
-                  calendar.isDate(resetAt, inSameDayAs: tomorrow) {
-            lead = "tomorrow \(time)"
-        } else if resetAt.timeIntervalSince(now) < 6 * 24 * 60 * 60 {
-            lead = format(resetAt, "EEE h:mm a", timeZone: timeZone)
-        } else {
-            lead = format(resetAt, "MMM d h:mm a", timeZone: timeZone)
+    /// "tonight 8:00 PM" + "4h 15m", "Wed 12:21 AM" + "3d 8h". A reset already passed (only
+    /// possible for stale readings) says so instead of naming a weekday that reads as next week.
+    static func resetLead(for resetAt: Date, now: Date, timeZone: TimeZone) -> (lead: String, countdown: String?) {
+        guard resetAt > now else {
+            return ("reset passed", nil)
         }
-        return (lead, countdown(max(0, resetAt.timeIntervalSince(now))))
+        return (dayAndTimeText(resetAt, now: now, timeZone: timeZone), countdown(resetAt.timeIntervalSince(now)))
+    }
+
+    /// "today 4:30 PM", "tonight 8:00 PM" (including just after midnight), "tomorrow 9:00 AM",
+    /// "Wed 12:21 AM" within six days, otherwise "Oct 20 9:00 AM".
+    static func dayAndTimeText(_ date: Date, now: Date, timeZone: TimeZone) -> String {
+        let calendar = gregorian(timeZone)
+        let time = timeText(date, timeZone: timeZone)
+        let hour = calendar.component(.hour, from: date)
+        if calendar.isDate(date, inSameDayAs: now) {
+            return hour >= 17 ? "tonight \(time)" : "today \(time)"
+        }
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now), calendar.isDate(date, inSameDayAs: tomorrow) {
+            return hour < 3 ? "tonight \(time)" : "tomorrow \(time)"
+        }
+        if date.timeIntervalSince(now) < 6 * 24 * 60 * 60 {
+            return format(date, "EEE h:mm a", timeZone: timeZone)
+        }
+        return format(date, "MMM d h:mm a", timeZone: timeZone)
+    }
+
+    /// A past moment: "3:03 PM" today, otherwise with its weekday or date.
+    static func momentText(_ date: Date, now: Date, timeZone: TimeZone) -> String {
+        if gregorian(timeZone).isDate(date, inSameDayAs: now) {
+            return timeText(date, timeZone: timeZone)
+        }
+        if now.timeIntervalSince(date) < 6 * 24 * 60 * 60 {
+            return format(date, "EEE h:mm a", timeZone: timeZone)
+        }
+        return format(date, "MMM d h:mm a", timeZone: timeZone)
     }
 
     static func countdown(_ remaining: TimeInterval) -> String {
@@ -322,8 +350,10 @@ enum ProviderCardPresenter {
 
     // MARK: - Pace estimate
 
-    /// Projects the meter at its recent pace: the last 3 hours when the limit resets within a day,
-    /// otherwise the last 24 hours, using only readings from the current reset window.
+    /// Projects the meter at its recent pace, from readings in the current reset window only:
+    /// the last 3 hours when the limit resets within a day, otherwise the last 24 hours. The pace
+    /// is a least-squares trend so one dip or one 1% tick does not decide it, the basis names the
+    /// span actually observed, and too little data says so rather than extrapolating.
     static func estimate(
         for meter: UsageMeterSnapshot,
         current: CombinedUsageSnapshot,
@@ -335,10 +365,15 @@ enum ProviderCardPresenter {
         if value >= 100 {
             return UsageEstimatePresentation(tone: .hit, text: "At 100% until reset", basis: "")
         }
-
         let untilReset = meter.resetAt.timeIntervalSince(now)
-        let window = untilReset <= longPaceWindow ? shortPaceWindow : longPaceWindow
-        let basis = window == shortPaceWindow ? "last 3h" : "last 24h"
+        let notEnoughData = UsageEstimatePresentation(tone: .noData, text: "Estimate available after a few readings", basis: "")
+        guard untilReset > 0 else {
+            return notEnoughData
+        }
+
+        let isShortHorizon = untilReset <= shortHorizon
+        let window = isShortHorizon ? shortPaceWindow : longPaceWindow
+        let minimumSpan = isShortHorizon ? minimumShortPaceSpan : minimumLongPaceSpan
         let samples = UsageAnalytics.samples(
             for: meter.kind,
             in: UsagePresentation.mergedSnapshots(history, current: current)
@@ -348,21 +383,20 @@ enum ProviderCardPresenter {
                 && $0.capturedAt >= now.addingTimeInterval(-window)
                 && $0.capturedAt <= now
         }
-        guard let first = samples.first,
-              let last = samples.last,
-              last.capturedAt.timeIntervalSince(first.capturedAt) >= minimumPaceSpan else {
-            return UsageEstimatePresentation(tone: .noData, text: "Estimate available after a few readings", basis: "")
+        guard let first = samples.first, let last = samples.last else {
+            return notEnoughData
+        }
+        let span = last.capturedAt.timeIntervalSince(first.capturedAt)
+        guard span >= minimumSpan, let pointsPerSecond = trendSlope(samples) else {
+            return notEnoughData
         }
 
-        let increase = last.utilization.value - first.utilization.value
-        guard increase > 0 else {
-            let span = window == shortPaceWindow ? "3 hours" : "24 hours"
-            return UsageEstimatePresentation(tone: .idle, text: "No usage in the last \(span)", basis: "")
+        guard pointsPerSecond > 0, pointsPerSecond * span >= 1 else {
+            return UsageEstimatePresentation(tone: .idle, text: "No usage in the last \(durationText(span, style: .long))", basis: "")
         }
 
-        let pointsPerSecond = increase / last.capturedAt.timeIntervalSince(first.capturedAt)
-        let secondsToLimit = (100 - value) / pointsPerSecond
-        let limitAt = now.addingTimeInterval(secondsToLimit)
+        let basis = "last \(durationText(span, style: .short))"
+        let limitAt = now.addingTimeInterval((100 - value) / pointsPerSecond)
         if limitAt < meter.resetAt {
             return UsageEstimatePresentation(
                 tone: .hit,
@@ -371,7 +405,7 @@ enum ProviderCardPresenter {
             )
         }
 
-        let atReset = min(99, value + pointsPerSecond * max(0, untilReset))
+        let atReset = min(99, value + pointsPerSecond * untilReset)
         return UsageEstimatePresentation(
             tone: atReset >= 90 ? .close : .safe,
             text: "Reaches ~\(Int(atReset.rounded()))% by reset",
@@ -379,14 +413,49 @@ enum ProviderCardPresenter {
         )
     }
 
-    /// "~6:30 PM" today, "Mon ~12:20 AM" on another day, rounded to ten minutes.
+    /// Least-squares slope in points per second; nil when every reading shares one timestamp.
+    static func trendSlope(_ samples: [MeterHistorySample]) -> Double? {
+        guard let origin = samples.first?.capturedAt, samples.count >= 2 else {
+            return nil
+        }
+        let points = samples.map { ($0.capturedAt.timeIntervalSince(origin), $0.utilization.value) }
+        let meanX = points.map(\.0).reduce(0, +) / Double(points.count)
+        let meanY = points.map(\.1).reduce(0, +) / Double(points.count)
+        let spread = points.reduce(0) { $0 + ($1.0 - meanX) * ($1.0 - meanX) }
+        guard spread > 0 else {
+            return nil
+        }
+        return points.reduce(0) { $0 + ($1.0 - meanX) * ($1.1 - meanY) } / spread
+    }
+
+    enum DurationStyle {
+        case short
+        case long
+    }
+
+    /// "3h" / "3 hours", "45m" / "45 minutes", rounded to the hour from one hour up.
+    static func durationText(_ interval: TimeInterval, style: DurationStyle) -> String {
+        let minutes = Int((interval / 60).rounded())
+        if minutes >= 60 {
+            let hours = Int((Double(minutes) / 60).rounded())
+            return style == .short ? "\(hours)h" : (hours == 1 ? "1 hour" : "\(hours) hours")
+        }
+        let rounded = max(5, (minutes / 5) * 5)
+        return style == .short ? "\(rounded)m" : "\(rounded) minutes"
+    }
+
+    /// "~6:20 PM" today, "Mon ~12:20 AM" within six days, otherwise "Oct 20 ~9:00 AM". Rounded
+    /// down to ten minutes so the estimate never lands after the moment it describes.
     static func approximateTimeText(_ date: Date, now: Date, timeZone: TimeZone) -> String {
-        let rounded = Date(timeIntervalSince1970: (date.timeIntervalSince1970 / 600).rounded() * 600)
+        let rounded = Date(timeIntervalSince1970: (date.timeIntervalSince1970 / 600).rounded(.down) * 600)
         let time = "~\(timeText(rounded, timeZone: timeZone))"
         if gregorian(timeZone).isDate(rounded, inSameDayAs: now) {
             return time
         }
-        return "\(format(rounded, "EEE", timeZone: timeZone)) \(time)"
+        if rounded.timeIntervalSince(now) < 6 * 24 * 60 * 60 {
+            return "\(format(rounded, "EEE", timeZone: timeZone)) \(time)"
+        }
+        return "\(format(rounded, "MMM d", timeZone: timeZone)) \(time)"
     }
 
     // MARK: - Reset credits

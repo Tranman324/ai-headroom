@@ -137,7 +137,13 @@ struct CombinedSnapshotHistoryRecord: Codable, Equatable, Sendable {
     init(snapshot: CombinedUsageSnapshot) {
         self.schemaVersion = UsageHistoryRecord.currentSchemaVersion
         self.capturedAt = snapshot.capturedAt
-        self.snapshot = snapshot
+        // Reset credits are live-only, like in provider records.
+        self.snapshot = CombinedUsageSnapshot(
+            capturedAt: snapshot.capturedAt,
+            providers: snapshot.providers.map {
+                ProviderUsageSnapshot(provider: $0.provider, meters: $0.meters, health: $0.health)
+            }
+        )
     }
 }
 

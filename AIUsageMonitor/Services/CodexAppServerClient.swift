@@ -530,6 +530,19 @@ private struct CodexResetCreditsSummary: Decodable {
     var availableCount: Int
     var credits: [CodexResetCredit]?
 
+    enum CodingKeys: String, CodingKey {
+        case availableCount
+        case credits
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        availableCount = try container.decode(Int.self, forKey: .availableCount)
+        // One unreadable credit entry drops only that entry, never the count.
+        credits = (try? container.decodeIfPresent([CodexLossyResetCredit].self, forKey: .credits))?
+            .compactMap(\.credit)
+    }
+
     var summary: RateLimitResetCredits {
         RateLimitResetCredits(
             availableCount: max(0, availableCount),
@@ -538,6 +551,14 @@ private struct CodexResetCreditsSummary: Decodable {
                 .map { RateLimitResetCredit(title: $0.title, expiresAt: $0.expiresAt.map(Date.init(timeIntervalSince1970:))) }
                 .sorted { ($0.expiresAt ?? .distantFuture) < ($1.expiresAt ?? .distantFuture) }
         )
+    }
+}
+
+private struct CodexLossyResetCredit: Decodable {
+    var credit: CodexResetCredit?
+
+    init(from decoder: Decoder) throws {
+        credit = try? CodexResetCredit(from: decoder)
     }
 }
 

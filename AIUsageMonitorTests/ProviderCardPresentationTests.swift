@@ -44,7 +44,8 @@ final class ProviderCardPresentationTests: XCTestCase {
         let card = card(.codex, scenario: .today)
 
         XCTAssertEqual(card.estimate?.tone, .hit)
-        XCTAssertEqual(card.estimate?.text, "Hits 100% Mon ~12:20 AM, before reset")
+        // 32.5 hours at 1.63%/h lands at 12:16 AM; estimates round down so they never run late.
+        XCTAssertEqual(card.estimate?.text, "Hits 100% Mon ~12:10 AM, before reset")
         XCTAssertEqual(card.estimate?.basis, "last 24h")
     }
 
@@ -58,22 +59,86 @@ final class ProviderCardPresentationTests: XCTestCase {
     }
 
     func testEstimateIgnoresReadingsFromThePreviousWindow() {
-        // Readings before the last reset belong to another window and must not feed the pace.
-        let previousReset = now.addingTimeInterval(-3600)
-        var history = Scenario.history(.claudeWeekAll, current: 10, perHour: 0, span: 0.5, now: now, reset: claudeWeekReset)
-        history += Scenario.history(.claudeWeekAll, current: 99, perHour: 30, span: 2, now: now.addingTimeInterval(-3700), reset: previousReset)
-        let snapshot = Scenario.snapshot(now: now, claude: [(.claudeWeekAll, 10, claudeWeekReset)], codex: [])
+        // The weekly limit reset 90 minutes ago at 95%; since then usage climbed 0 → 6% at 6%/h.
+        // Mixing in the old window's high readings would read as falling usage ("No usage").
+        let previousReset = now.addingTimeInterval(-90 * 60)
+        let nextReset = now.addingTimeInterval(7 * 3600)
+        var history = Scenario.history(.claudeWeekAll, current: 95, perHour: 0, span: 1, now: previousReset.addingTimeInterval(-60), reset: previousReset)
+        history += Scenario.history(.claudeWeekAll, current: 6, perHour: 6, span: 1, now: now, reset: nextReset)
+        let snapshot = Scenario.snapshot(now: now, claude: [(.claudeWeekAll, 6, nextReset)], codex: [])
 
-        let estimate = ProviderCardPresenter.card(
-            provider: .claude,
-            snapshot: snapshot,
-            history: history,
-            connection: nil,
-            alertThreshold: 80,
-            timeZone: newYork
-        ).estimate
+        let estimate = ProviderCardPresenter.card(provider: .claude, snapshot: snapshot, history: history, connection: nil, alertThreshold: 80, timeZone: newYork).estimate
 
-        XCTAssertEqual(estimate?.tone, .idle)
+        XCTAssertEqual(estimate, UsageEstimatePresentation(tone: .safe, text: "Reaches ~48% by reset", basis: "last 1h"))
+    }
+
+    func testShortHorizonUsesOnlyTheLastThreeHours() {
+        // Flat at 50% for most of the day, then 50 → 80% in the last 3 hours; resets in 4 hours.
+        let reset = now.addingTimeInterval(4 * 3600)
+        var history = Scenario.history(.claudeWeekAll, current: 50, perHour: 0, span: 17, now: now.addingTimeInterval(-3 * 3600), reset: reset)
+        history += Scenario.history(.claudeWeekAll, current: 80, perHour: 10, span: 3, now: now, reset: reset)
+        let snapshot = Scenario.snapshot(now: now, claude: [(.claudeWeekAll, 80, reset)], codex: [])
+
+        let estimate = ProviderCardPresenter.card(provider: .claude, snapshot: snapshot, history: Scenario.mergedByPoll(history), connection: nil, alertThreshold: 80, timeZone: newYork).estimate
+
+        XCTAssertEqual(estimate, UsageEstimatePresentation(tone: .hit, text: "Hits 100% ~5:40 PM, before reset", basis: "last 3h"))
+    }
+
+    func testLongHorizonUsesTheLastDayAndNotOlderReadings() {
+        // A steep climb 48 to 24 hours ago, then flat for a day; resets in 3 days.
+        let reset = now.addingTimeInterval(3 * 86_400)
+        var history = Scenario.history(.codexWeek, current: 40, perHour: 1.5, span: 24, now: now.addingTimeInterval(-24 * 3600 - 60), reset: reset)
+        history += Scenario.history(.codexWeek, current: 40, perHour: 0, span: 24, now: now, reset: reset)
+        let snapshot = Scenario.snapshot(now: now, claude: [], codex: [(.codexWeek, 40, reset)])
+
+        let estimate = ProviderCardPresenter.card(provider: .codex, snapshot: snapshot, history: Scenario.mergedByPoll(history), connection: nil, alertThreshold: 80, timeZone: newYork).estimate
+
+        XCTAssertEqual(estimate, UsageEstimatePresentation(tone: .idle, text: "No usage in the last 24 hours", basis: ""))
+    }
+
+    func testBasisNamesTheSpanActuallyObservedAndShortSpansDoNotProject() {
+        let reset = now.addingTimeInterval(3 * 86_400)
+        func estimate(hours: Double) -> UsageEstimatePresentation? {
+            let snapshot = Scenario.snapshot(now: now, claude: [], codex: [(.codexWeek, 47, reset)])
+            let history = Scenario.history(.codexWeek, current: 47, perHour: 1.5, span: hours, now: now, reset: reset)
+            return ProviderCardPresenter.card(provider: .codex, snapshot: snapshot, history: history, connection: nil, alertThreshold: 80, timeZone: newYork).estimate
+        }
+
+        // Two hours of readings cannot honestly forecast a limit three days out.
+        XCTAssertEqual(estimate(hours: 2)?.tone, .noData)
+        XCTAssertEqual(estimate(hours: 7)?.basis, "last 7h")
+        XCTAssertEqual(estimate(hours: 24)?.basis, "last 24h")
+    }
+
+    func testASingleOnePercentTickIsNotEnoughToForecast() {
+        // Twenty minutes after a reset, 0 → 1%.
+        let reset = now.addingTimeInterval(23 * 3600)
+        let snapshot = Scenario.snapshot(now: now, claude: [(.claudeWeekAll, 1, reset)], codex: [])
+        let history = Scenario.history(.claudeWeekAll, current: 1, perHour: 3, span: 1.0 / 3, now: now, reset: reset)
+
+        let estimate = ProviderCardPresenter.card(provider: .claude, snapshot: snapshot, history: history, connection: nil, alertThreshold: 80, timeZone: newYork).estimate
+
+        XCTAssertEqual(estimate?.tone, .noData)
+    }
+
+    func testOneDipDoesNotHideARisingTrend() {
+        let reset = now.addingTimeInterval(6 * 3600)
+        var history = Scenario.history(.claudeWeekAll, current: 40, perHour: 3.5, span: 3, now: now.addingTimeInterval(-60), reset: reset)
+        history.append(Scenario.snapshot(now: now.addingTimeInterval(-30), claude: [(.claudeWeekAll, 39, reset)], codex: []))
+        let snapshot = Scenario.snapshot(now: now, claude: [(.claudeWeekAll, 39, reset)], codex: [])
+
+        let estimate = ProviderCardPresenter.card(provider: .claude, snapshot: snapshot, history: history, connection: nil, alertThreshold: 80, timeZone: newYork).estimate
+
+        XCTAssertNotEqual(estimate?.tone, .idle, "A one-point drop at the end of a climb is noise, not idleness")
+        XCTAssertEqual(estimate?.basis, "last 3h")
+    }
+
+    func testEstimateTimesRoundDownAndNameTheDateWhenAWeekAway() {
+        let at558 = Date(timeIntervalSince1970: 1_791_669_480) // 5:58 PM
+        let sixDaysOut = now.addingTimeInterval(6.5 * 86_400)
+
+        XCTAssertEqual(ProviderCardPresenter.approximateTimeText(at558, now: now, timeZone: newYork), "~5:50 PM")
+        XCTAssertEqual(ProviderCardPresenter.approximateTimeText(sixDaysOut, now: now, timeZone: newYork), "Oct 17 ~3:40 AM")
     }
 
     func testAMeterAtTheLimitSaysSoUntilReset() {
@@ -143,7 +208,7 @@ final class ProviderCardPresentationTests: XCTestCase {
         XCTAssertFalse(codex.showsMeters)
         XCTAssertEqual(codex.reason, "Codex sign-in expired")
         XCTAssertEqual(codex.reasonAction, .signIn)
-        XCTAssertEqual(codex.reasonAction?.command(for: .codex), .startProviderAuthentication(.codex))
+        XCTAssertEqual(codex.reasonAction?.command(for: .codex), .showProviderConnections, "Sign-in runs from Connections, which shows the code")
 
         let unavailable = ProviderCardPresenter.card(
             provider: .codex,
@@ -180,6 +245,102 @@ final class ProviderCardPresentationTests: XCTestCase {
         XCTAssertEqual(unknown.reasonAction, .retry)
     }
 
+    func testResetWordingAcrossTheDayBoundariesAndDaylightSaving() {
+        func lead(_ seconds: TimeInterval, from start: Date? = nil) -> String {
+            ProviderCardPresenter.resetLead(for: Date(timeIntervalSince1970: seconds), now: start ?? now, timeZone: newYork).lead
+        }
+
+        XCTAssertEqual(lead(1_791_665_940), "today 4:59 PM")
+        XCTAssertEqual(lead(1_791_666_000), "tonight 5:00 PM")
+        XCTAssertEqual(lead(1_791_691_200), "tonight 12:00 AM", "A midnight reset is still tonight")
+        XCTAssertEqual(lead(1_791_703_800), "tomorrow 3:30 AM")
+        XCTAssertEqual(lead(now.addingTimeInterval(5.9 * 86_400).timeIntervalSince1970), "Fri 1:21 PM")
+        XCTAssertEqual(lead(now.addingTimeInterval(6.1 * 86_400).timeIntervalSince1970), "Oct 16 6:09 PM")
+
+        // Clocks fall back on Sun Nov 1 2026: Sat Oct 31 3:00 PM EDT → Mon Nov 2 9:00 AM EST is 43 hours.
+        let saturday = Date(timeIntervalSince1970: 1_793_473_200)
+        let monday = Date(timeIntervalSince1970: 1_793_628_000)
+        let crossing = ProviderCardPresenter.resetLead(for: monday, now: saturday, timeZone: newYork)
+        XCTAssertEqual(crossing.lead, "Mon 9:00 AM")
+        XCTAssertEqual(crossing.countdown, "1d 19h")
+    }
+
+    func testAPassedResetIsNotPresentedAsAFutureDay() {
+        let passed = ProviderCardPresenter.resetLead(for: now.addingTimeInterval(-60), now: now, timeZone: newYork)
+
+        XCTAssertEqual(passed.lead, "reset passed")
+        XCTAssertNil(passed.countdown)
+        let staleSession = ProviderCardPresenter.meterRow(
+            UsageMeterSnapshot(kind: .claudeSession, utilization: try! UtilizationPercentage(40), resetAt: now.addingTimeInterval(-60)),
+            isPrimary: false,
+            now: now,
+            alertThreshold: 80,
+            timeZone: newYork
+        )
+        XCTAssertNil(staleSession.trailingText)
+    }
+
+    func testStaleReasonDatesAnOldReadingAndSignedOutAccountsGetSignIn() {
+        let yesterday = now.addingTimeInterval(-86_400 - 42 * 60)
+        let snapshot = Scenario.snapshot(
+            now: now,
+            claude: [(.claudeWeekAll, 60, Scenario.claudeWeekReset)],
+            codex: [],
+            claudeHealth: .stale(
+                checkedAt: now,
+                staleSince: yesterday,
+                error: SanitizedProviderError(code: .unauthorized, displayMessage: "Claude authorization is required.")
+            )
+        )
+
+        let card = ProviderCardPresenter.card(provider: .claude, snapshot: snapshot, history: [], connection: nil, alertThreshold: 80, timeZone: newYork)
+
+        XCTAssertEqual(card.reason, "Last reading Fri 3:03 PM · Claude authorization is required.")
+        XCTAssertEqual(card.reasonAction, .signIn)
+        XCTAssertEqual(ProviderCardPresentation.ReasonAction.signIn.command(for: .claude), .showProviderConnections)
+        XCTAssertEqual(ProviderCardPresentation.ReasonAction.connect.command(for: .codex), .showProviderConnections)
+        XCTAssertEqual(ProviderCardPresentation.ReasonAction.retry.command(for: .codex), .refresh)
+    }
+
+    func testGlowFollowsTheUsersAlertThresholdAndSkipsModelRows() {
+        let built = Scenario.today.build(now: now)
+        func card(threshold: Double) -> ProviderCardPresentation {
+            ProviderCardPresenter.card(provider: .claude, snapshot: built.snapshot, history: built.history, connection: nil, alertThreshold: threshold, timeZone: newYork)
+        }
+
+        XCTAssertEqual(card(threshold: 85).primaryMeter?.glows, true)
+        XCTAssertEqual(card(threshold: 90).primaryMeter?.glows, false)
+        XCTAssertEqual(card(threshold: 30).modelMeters.first?.glows, false, "Per-model rows never glow")
+    }
+
+    func testCreditsOnlyAppearForAHealthyOrStaleCodexAccount() {
+        let credits = RateLimitResetCredits(availableCount: 2, credits: [Scenario.oct29])
+        var claudeWithCredits = Scenario.today.build(now: now).snapshot
+        claudeWithCredits.providers = claudeWithCredits.providers.map {
+            ProviderUsageSnapshot(provider: $0.provider, meters: $0.meters, health: $0.health, resetCredits: credits)
+        }
+        let erroredWithCredits = CombinedUsageSnapshot(capturedAt: now, providers: [ProviderUsageSnapshot(
+            provider: .codex,
+            meters: [],
+            health: .errored(checkedAt: now, error: SanitizedProviderError(code: .unauthorized, displayMessage: "Codex sign-in expired")),
+            resetCredits: credits
+        )])
+
+        XCTAssertNil(ProviderCardPresenter.card(provider: .claude, snapshot: claudeWithCredits, history: [], connection: nil, alertThreshold: 80, timeZone: newYork).credits)
+        XCTAssertNil(ProviderCardPresenter.card(provider: .codex, snapshot: erroredWithCredits, history: [], connection: nil, alertThreshold: 80, timeZone: newYork).credits)
+        XCTAssertNotNil(card(.codex, scenario: .codexStale).credits)
+    }
+
+    func testShowProviderConnectionsOpensConnectionsFromTheList() async throws {
+        let store = await UsageMonitorStore(dependencies: AppCompositionRoot.fixture())
+
+        try await store.handle(.showProviderConnections)
+
+        let navigation = await store.navigation
+        XCTAssertTrue(navigation.isSettingsPresented)
+        XCTAssertTrue(navigation.isProviderConnectionsPresented)
+    }
+
     // MARK: - Reset credits
 
     func testCreditsShowCountNextExpiryAndPerCreditDetail() throws {
@@ -204,6 +365,22 @@ final class ProviderCardPresentationTests: XCTestCase {
         XCTAssertEqual(none.countText, "No resets left")
         XCTAssertEqual(none.expiryText, "")
         XCTAssertFalse(none.hasCredits)
+    }
+
+    func testExpiringSoonMeansWithinSevenDays() {
+        func presentation(daysAhead: Double) -> ResetCreditsPresentation {
+            ProviderCardPresenter.creditsPresentation(
+                RateLimitResetCredits(availableCount: 1, credits: [RateLimitResetCredit(title: "Full reset", expiresAt: now.addingTimeInterval(daysAhead * 86_400))]),
+                now: now,
+                timeZone: newYork
+            )
+        }
+
+        XCTAssertTrue(presentation(daysAhead: 7).isExpiringSoon)
+        XCTAssertEqual(presentation(daysAhead: 7).credits.first?.isExpiringSoon, true)
+        XCTAssertFalse(presentation(daysAhead: 8).isExpiringSoon)
+        XCTAssertEqual(presentation(daysAhead: 8).credits.first?.isExpiringSoon, false)
+        XCTAssertEqual(presentation(daysAhead: 1).credits.first?.detail, "Expires tomorrow · Sun Oct 11, 2026")
     }
 
     func testCreditCountComesFromTheAvailableCountEvenWhenTheListIsShort() {
@@ -239,6 +416,31 @@ final class ProviderCardPresentationTests: XCTestCase {
             RateLimitResetCredit(title: "Full reset", expiresAt: Date(timeIntervalSince1970: 1_793_988_000))
         ]))
         XCTAssertFalse(String(describing: usage).contains("secret-credit"))
+    }
+
+    func testOneUnreadableCreditKeepsTheCountAndTheOtherCredits() async throws {
+        let script = """
+        while IFS= read -r line; do
+          case "$line" in
+            *rateLimits*read*) printf '%s\\n' '{"id":3,"result":{"rateLimits":{"primary":{"usedPercent":47,"windowDurationMins":10080,"resetsAt":1791951660},"secondary":null},"rateLimitResetCredits":{"availableCount":2,"credits":[{"status":"available","expiresAt":"soon"},{"status":"available","expiresAt":1793293200,"title":"Full reset"}]}}}' ;;
+            *account*read*) printf '%s\\n' '{"id":2,"result":{"account":{"type":"chatgpt","planType":"prolite"}}}' ;;
+            *initialize*) printf '%s\\n' '{"id":1,"result":{}}' ;;
+          esac
+        done
+        """
+        let client = CodexAppServerClient(executableURL: URL(fileURLWithPath: "/bin/sh"), executableArguments: ["-c", script])
+
+        let usage = try await client.readUsage()
+        await client.shutdown()
+
+        XCTAssertEqual(usage.resetCredits, RateLimitResetCredits(availableCount: 2, credits: [Scenario.oct29]))
+    }
+
+    func testCombinedHistoryRecordsDropResetCreditsToo() {
+        let snapshot = Scenario.today.build(now: now).snapshot
+
+        XCTAssertNotNil(snapshot.provider(.codex)?.resetCredits)
+        XCTAssertNil(CombinedSnapshotHistoryRecord(snapshot: snapshot).snapshot.provider(.codex)?.resetCredits)
     }
 
     func testMalformedResetCreditsDoNotHideTheLimits() async throws {
@@ -314,10 +516,11 @@ final class PopoverDesignEvidenceTests: XCTestCase {
                 try await store.handle(.closeSettings)
             }
 
-            let bitmap = try render(store)
+            let bitmap = try render(makeHost(store, showsCreditList: false))
 
             XCTAssertEqual(bitmap.size.width, UsagePopoverMetrics.contentWidth)
             XCTAssertGreaterThan(bitmap.size.height, 200, "\(scenario) rendered empty")
+            XCTAssertEqual(brightPixelsInSideMargins(bitmap), 0, "\(scenario) pushed content into the popover margins")
             if let directory {
                 let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
                 try data.write(to: directory.appendingPathComponent("popover-\(scenario.rawValue)@2x.png"))
@@ -325,14 +528,144 @@ final class PopoverDesignEvidenceTests: XCTestCase {
         }
     }
 
-    private func render(_ store: UsageMonitorStore) throws -> NSBitmapImageRep {
-        let host = NSHostingView(rootView: UsagePopoverView(store: store, configuration: .production))
+    func testOpenCreditListDrawsOverTheRowsAbove() throws {
+        let closed = try render(makeHost(store(.today), showsCreditList: false))
+        let open = try render(makeHost(store(.today), showsCreditList: true))
+
+        XCTAssertEqual(open.size, closed.size, "The list floats over the popover instead of growing it")
+        XCTAssertGreaterThan(differingPixels(closed, open), 4_000, "The open credit list must actually draw")
+        XCTAssertEqual(brightPixelsInSideMargins(open), 0)
+        if let directory = evidenceDirectory() {
+            let data = try XCTUnwrap(open.representation(using: .png, properties: [:]))
+            try data.write(to: directory.appendingPathComponent("popover-today-credits-open@2x.png"))
+        }
+    }
+
+    func testCreditsRowTakesItsOwnLineWheneverCodexReportsCredits() throws {
+        let withCredits = try render(makeHost(store(.today), showsCreditList: false))
+        let noneLeft = try render(makeHost(store(.codexNoCredits), showsCreditList: false))
+        var withoutBlock = Scenario.today.build(now: now)
+        withoutBlock.snapshot.providers = withoutBlock.snapshot.providers.map {
+            ProviderUsageSnapshot(provider: $0.provider, meters: $0.meters, health: $0.health)
+        }
+        let unreported = try render(makeHost(store(withoutBlock), showsCreditList: false))
+
+        XCTAssertEqual(noneLeft.size.height, withCredits.size.height, "'No resets left' keeps its row")
+        XCTAssertGreaterThan(withCredits.size.height - unreported.size.height, 14, "The credits row must be drawn")
+    }
+
+    func testStaleAccountDimsItsMetersAndErrorsCollapse() throws {
+        let today = try render(makeHost(store(.today), showsCreditList: false))
+        let stale = try render(makeHost(store(.claudeStale), showsCreditList: false))
+        let error = try render(makeHost(store(.codexError), showsCreditList: false))
+
+        let fullAmber = pixelCount(near: UsagePalette.warning, in: today)
+        XCTAssertGreaterThan(fullAmber, 400, "Today's 87% week bar is amber")
+        XCTAssertLessThan(pixelCount(near: UsagePalette.warning, in: stale), fullAmber / 2, "Stale meters must be dimmed")
+        XCTAssertGreaterThan(today.size.height - error.size.height, 40, "An errored account collapses to its reason")
+    }
+
+    private var now: Date {
+        Date(timeIntervalSince1970: 1_791_661_500)
+    }
+
+    private func store(_ scenario: Scenario) -> UsageMonitorStore {
+        store(scenario.build(now: now))
+    }
+
+    private func store(_ built: (snapshot: CombinedUsageSnapshot, history: [CombinedUsageSnapshot])) -> UsageMonitorStore {
+        UsageMonitorStore(
+            dependencies: AppCompositionRoot.fixture(snapshot: built.snapshot, historySnapshots: built.history),
+            initialSnapshot: built.snapshot,
+            historicalSnapshots: built.history
+        )
+    }
+
+    private func pixelCount(near color: NSColor, in bitmap: NSBitmapImageRep) -> Int {
+        let target = color.usingColorSpace(.deviceRGB) ?? color
+        var count = 0
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                guard let pixel = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB), pixel.alphaComponent > 0.5 else {
+                    continue
+                }
+                let distance = abs(pixel.redComponent - target.redComponent)
+                    + abs(pixel.greenComponent - target.greenComponent)
+                    + abs(pixel.blueComponent - target.blueComponent)
+                if distance < 0.12 {
+                    count += 1
+                }
+            }
+        }
+        return count
+    }
+
+    private func differingPixels(_ lhs: NSBitmapImageRep, _ rhs: NSBitmapImageRep) -> Int {
+        var count = 0
+        for y in 0..<min(lhs.pixelsHigh, rhs.pixelsHigh) {
+            for x in 0..<min(lhs.pixelsWide, rhs.pixelsWide) {
+                guard let a = lhs.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                      let b = rhs.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else {
+                    continue
+                }
+                if abs(a.redComponent - b.redComponent) + abs(a.greenComponent - b.greenComponent) + abs(a.blueComponent - b.blueComponent) > 0.1 {
+                    count += 1
+                }
+            }
+        }
+        return count
+    }
+
+    /// Text that overflows the 292 pt content column lands in the 14 pt side margins.
+    private func brightPixelsInSideMargins(_ bitmap: NSBitmapImageRep) -> Int {
+        let scale = Double(bitmap.pixelsWide) / bitmap.size.width
+        let margin = Int(12 * scale)
+        let border = Int(3 * scale)
+        var count = 0
+        for y in Int(20 * scale)..<(bitmap.pixelsHigh - Int(20 * scale)) {
+            for x in Array(border..<margin) + Array((bitmap.pixelsWide - margin)..<(bitmap.pixelsWide - border)) {
+                guard let pixel = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else {
+                    continue
+                }
+                if pixel.alphaComponent > 0.5, (pixel.redComponent + pixel.greenComponent + pixel.blueComponent) / 3 > 0.55 {
+                    count += 1
+                }
+            }
+        }
+        return count
+    }
+
+    /// The window is never ordered on screen; SwiftUI only builds its accessibility tree for
+    /// views that are in a window.
+    private func makeHost(_ store: UsageMonitorStore, showsCreditList: Bool) throws -> NSHostingView<some View> {
+        let host = NSHostingView(rootView: UsagePopoverView(store: store, configuration: .production)
+            .environment(\.showsResetCreditListForEvidence, showsCreditList))
         host.appearance = NSAppearance(named: .darkAqua)
         host.frame = NSRect(x: 0, y: 0, width: UsagePopoverMetrics.contentWidth, height: 900)
         let height = ceil(host.fittingSize.height)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: UsagePopoverMetrics.contentWidth, height: height),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = host
         host.frame = NSRect(x: 0, y: 0, width: UsagePopoverMetrics.contentWidth, height: height)
         host.layoutSubtreeIfNeeded()
+        offscreenWindows.append(window)
+        return host
+    }
 
+    private var offscreenWindows: [NSWindow] = []
+
+    override func tearDown() {
+        offscreenWindows.forEach { $0.close() }
+        offscreenWindows.removeAll()
+        super.tearDown()
+    }
+
+    private func render(_ host: NSView) throws -> NSBitmapImageRep {
         let bitmap = try XCTUnwrap(NSBitmapImageRep(
             bitmapDataPlanes: nil,
             pixelsWide: Int(host.bounds.width * 2),
@@ -369,6 +702,7 @@ enum Scenario: String, CaseIterable {
     case safe
     case idle
     case claudeStale
+    case codexStale
     case codexError
     case codexNotConnected
     case codexNoCredits
@@ -390,6 +724,7 @@ enum Scenario: String, CaseIterable {
         var claudeHealth: ProviderHealth = .fresh(checkedAt: now)
         var codexHealth: ProviderHealth = .fresh(checkedAt: now)
         var credits = RateLimitResetCredits(availableCount: 2, credits: [Self.oct29, Self.nov6])
+        var codexPlan = "Pro 5x"
 
         let todayClaude: [Meter] = [(.claudeSession, 13, Self.claudeSessionReset), (.claudeWeekAll, 87, Self.claudeWeekReset), (.claudeWeekFable, 38, Self.claudeWeekReset)]
         let todayCodex: [Meter] = [(.codexWeek, 47, Self.codexWeekReset)]
@@ -419,7 +754,6 @@ enum Scenario: String, CaseIterable {
             codex = [(.codexWeek, 91, Self.codexWeekReset)]
             claudeRate = 5.0
             codexRate = 2.4
-            codexSpan = 3
         case .safe:
             claude = [(.claudeSession, 5, Self.claudeSessionReset), (.claudeWeekAll, 22, Self.claudeWeekReset), (.claudeWeekFable, 9, Self.claudeWeekReset)]
             codex = [(.codexWeek, 30, Self.codexWeekReset)]
@@ -430,6 +764,16 @@ enum Scenario: String, CaseIterable {
             codex = [(.codexWeek, 5, Self.codexWeekReset)]
             claudeRate = 0
             codexSpan = 0.1
+        case .codexStale:
+            // The widest header: a long plan name, the STALE pill, and a reset a week away.
+            claude = todayClaude
+            codex = [(.codexWeek, 47, now.addingTimeInterval(6.8 * 86_400))]
+            codexPlan = "Enterprise"
+            codexHealth = .stale(
+                checkedAt: now,
+                staleSince: now.addingTimeInterval(-50 * 60),
+                error: SanitizedProviderError(code: .unavailable, displayMessage: "Codex CLI was not found. Install or update it, then refresh.")
+            )
         case .claudeStale:
             claude = todayClaude
             codex = todayCodex
@@ -440,7 +784,7 @@ enum Scenario: String, CaseIterable {
             )
         }
 
-        let snapshot = Self.snapshot(now: now, claude: claude, codex: codex, claudeHealth: claudeHealth, codexHealth: codexHealth, credits: credits)
+        let snapshot = Self.snapshot(now: now, claude: claude, codex: codex, claudeHealth: claudeHealth, codexHealth: codexHealth, credits: credits, codexPlan: codexPlan)
         var history: [CombinedUsageSnapshot] = []
         for (kind, value, reset) in claude where kind.window == .weekly {
             history += Self.history(kind, current: value, perHour: claudeRate, span: 2.5, now: now, reset: reset)
@@ -474,7 +818,8 @@ enum Scenario: String, CaseIterable {
         codex: [(MeterKind, Double, Date)],
         claudeHealth: ProviderHealth? = nil,
         codexHealth: ProviderHealth? = nil,
-        credits: RateLimitResetCredits? = RateLimitResetCredits(availableCount: 2, credits: [oct29, nov6])
+        credits: RateLimitResetCredits? = RateLimitResetCredits(availableCount: 2, credits: [oct29, nov6]),
+        codexPlan: String = "Pro 5x"
     ) -> CombinedUsageSnapshot {
         func meters(_ list: [(MeterKind, Double, Date)], plan: String) -> [UsageMeterSnapshot] {
             list.map { kind, value, reset in
@@ -491,7 +836,7 @@ enum Scenario: String, CaseIterable {
             ),
             ProviderUsageSnapshot(
                 provider: .codex,
-                meters: meters(codex, plan: "Pro 5x"),
+                meters: meters(codex, plan: codexPlan),
                 health: codexHealth ?? (codex.isEmpty ? .noData(checkedAt: now) : .fresh(checkedAt: now)),
                 resetCredits: codex.isEmpty ? nil : credits
             )

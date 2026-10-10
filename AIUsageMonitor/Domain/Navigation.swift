@@ -49,6 +49,8 @@ enum AppIntentCommand: Codable, Equatable, Sendable {
     case openSettings
     case closeSettings
     case openProviderConnections
+    /// Jumps from the usage list straight to Connections, where sign-in shows its code and progress.
+    case showProviderConnections
     case closeProviderConnections
     case startProviderAuthentication(ProviderID)
     case showMeterDetail(MeterKind)
