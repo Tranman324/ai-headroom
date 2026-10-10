@@ -294,6 +294,34 @@ final class ProviderRecoveryTests: XCTestCase {
         }
     }
 
+    func testDiagnosticsHistorySectionCountsReadingsAndChartLines() async {
+        let lines = CollectedLines()
+        let suiteName = "AIUsageMonitorTests.\(UUID().uuidString)"
+        defer { UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName) }
+        let now = UsageMonitorFixtures.criticalSnapshot.capturedAt
+        let environment = ProviderDiagnosticsEnvironment(
+            overrides: FixedProviderRuntimeOverrides(claudeUsageSource: .statusLine),
+            defaults: UserDefaultsProviderRuntimeOverrides(suiteName: suiteName),
+            claudeLocator: ClaudeCLIRuntimeLocator(candidateExecutablePaths: [], isExecutable: { _ in false }, isTrustedExecutable: { _ in false }),
+            codexLocator: CodexAppServerRuntimeLocator(candidateExecutablePaths: [], isExecutable: { _ in false }, isTrustedExecutable: { _ in false }),
+            usageCache: ClaudeUsageCacheStore(rootProvider: FixedStorageRootProvider(storageRoot: makeTemporaryDirectory())),
+            statusLineInstaller: ClaudeStatusLineInstaller(
+                settingsURL: makeTemporaryDirectory().appendingPathComponent("settings.json"),
+                rootProvider: FixedStorageRootProvider(storageRoot: makeTemporaryDirectory()),
+                executableURL: URL(fileURLWithPath: "/Applications/AI Usage Monitor.app/Contents/MacOS/AI Usage Monitor")
+            ),
+            historyStore: InMemoryHistoryStore(initialSnapshots: UsageMonitorFixtures.expandedHistorySnapshots),
+            clock: FixedClock(now: now)
+        )
+
+        _ = await ProviderDiagnosticsCommand.run(environment: environment, output: { lines.append($0) })
+        let report = lines.joined
+
+        XCTAssertTrue(report.contains("Claude Week: "), report)
+        XCTAssertTrue(report.contains("7-day chart: All models ("), report)
+        XCTAssertFalse(report.contains("no lines yet"), report)
+    }
+
     private func makeTemporaryDirectory() -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)

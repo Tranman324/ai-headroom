@@ -31,6 +31,7 @@ enum HistorySnapshotAssembler {
     static let sessionResetHorizon: TimeInterval = 24 * 60 * 60
 
     static func snapshots(from records: [UsageHistoryRecord]) -> [CombinedUsageSnapshot] {
+        let weeklyResets = legacyWeeklyResetTimes(in: records)
         var snapshots: [CombinedUsageSnapshot] = []
         var providersByPoll: [Date: [ProviderID: ProviderUsageSnapshot]] = [:]
         for record in records {
@@ -39,7 +40,7 @@ enum HistorySnapshotAssembler {
                 snapshots.append(CombinedUsageSnapshot(
                     capturedAt: record.capturedAt,
                     providers: record.snapshot.providers.map {
-                        normalizedLegacyMeters($0, capturedAt: record.capturedAt)
+                        normalizedLegacyMeters($0, capturedAt: record.capturedAt, weeklyResets: weeklyResets)
                     }
                 ))
             case let .providerSnapshot(record):
@@ -49,7 +50,7 @@ enum HistorySnapshotAssembler {
                     continue
                 }
                 providersByPoll[record.capturedAt, default: [:]][record.provider] =
-                    normalizedLegacyMeters(record.snapshot, capturedAt: record.capturedAt)
+                    normalizedLegacyMeters(record.snapshot, capturedAt: record.capturedAt, weeklyResets: weeklyResets)
             case .providerFailure:
                 continue
             }
@@ -63,10 +64,42 @@ enum HistorySnapshotAssembler {
         return snapshots.sorted { $0.capturedAt < $1.capturedAt }
     }
 
+    /// Reset times that some legacy Codex "session" reading saw more than a day ahead. Every reading
+    /// sharing one of them belongs to that weekly window, including those taken in its last day.
+    /// Codex reports resets in whole seconds, identical across a window, so they match exactly.
+    static func legacyWeeklyResetTimes(in records: [UsageHistoryRecord]) -> Set<Date> {
+        var resets = Set<Date>()
+        func collect(_ snapshot: ProviderUsageSnapshot, capturedAt: Date) {
+            guard snapshot.provider == .codex else {
+                return
+            }
+            for meter in snapshot.meters
+            where meter.kind == .codexSession && meter.resetAt.timeIntervalSince(capturedAt) > sessionResetHorizon {
+                resets.insert(meter.resetAt)
+            }
+        }
+        for record in records {
+            switch record {
+            case let .combinedSnapshot(record):
+                record.snapshot.providers.forEach { collect($0, capturedAt: record.capturedAt) }
+            case let .providerSnapshot(record):
+                collect(record.snapshot, capturedAt: record.capturedAt)
+            case .providerFailure:
+                continue
+            }
+        }
+        return resets
+    }
+
     /// Builds before window-length labelling stored Codex's weekly-only limit as `codexSession`.
-    /// A reading that resets more than a day after it was taken is weekly, so it is relabelled on
-    /// read; the history file itself is left untouched so older builds can still read it.
-    static func normalizedLegacyMeters(_ snapshot: ProviderUsageSnapshot, capturedAt: Date) -> ProviderUsageSnapshot {
+    /// A reading that resets more than a day after it was taken, or shares a reset with one that
+    /// did, is weekly, so it is relabelled on read; the history file itself is left untouched so
+    /// older builds can still read it.
+    static func normalizedLegacyMeters(
+        _ snapshot: ProviderUsageSnapshot,
+        capturedAt: Date,
+        weeklyResets: Set<Date> = []
+    ) -> ProviderUsageSnapshot {
         guard snapshot.provider == .codex else {
             return snapshot
         }
@@ -74,7 +107,8 @@ enum HistorySnapshotAssembler {
         var meters: [UsageMeterSnapshot] = []
         for meter in snapshot.meters {
             guard meter.kind == .codexSession,
-                  meter.resetAt.timeIntervalSince(capturedAt) > sessionResetHorizon else {
+                  meter.resetAt.timeIntervalSince(capturedAt) > sessionResetHorizon
+                    || weeklyResets.contains(meter.resetAt) else {
                 meters.append(meter)
                 continue
             }

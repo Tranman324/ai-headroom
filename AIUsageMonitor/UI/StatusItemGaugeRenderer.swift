@@ -38,7 +38,7 @@ enum StatusItemGaugeRenderer {
             height: capsuleHeight
         )
         let image = NSImage(size: size, flipped: false) { rect in
-            UsagePalette.critical.setFill()
+            UsagePalette.statusCriticalCapsule.setFill()
             NSBezierPath(roundedRect: rect, xRadius: capsuleCornerRadius, yRadius: capsuleCornerRadius).fill()
             let glyphRect = NSRect(
                 x: capsuleHorizontalPadding,

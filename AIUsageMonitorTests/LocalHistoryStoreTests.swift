@@ -411,6 +411,104 @@ final class LocalHistoryStoreTests: XCTestCase {
         XCTAssertEqual(normalized.meters.first?.utilization.value, 45)
     }
 
+    func testLaunchRecoveryRelabelsALegacyWeeklyReading() async throws {
+        let store = makeStore(root: try temporaryRoot())
+        let capturedAt = UsageMonitorFixtures.baseDate
+        try await store.appendProviderSnapshot(
+            ProviderUsageSnapshot(
+                provider: .codex,
+                meters: [UsageMeterSnapshot(
+                    kind: .codexSession,
+                    utilization: try UtilizationPercentage(44),
+                    resetAt: capturedAt.addingTimeInterval(3 * 86_400)
+                )],
+                health: .fresh(checkedAt: capturedAt)
+            ),
+            capturedAt: capturedAt
+        )
+
+        let latest = try await store.latestUsableProviderSnapshots()
+
+        XCTAssertEqual(latest[.codex]?.meters.map(\.kind), [.codexWeek])
+    }
+
+    func testLegacyCombinedRecordsAreRelabelledToo() async throws {
+        let store = makeStore(root: try temporaryRoot())
+        let capturedAt = UsageMonitorFixtures.baseDate
+        try await store.append(CombinedUsageSnapshot(
+            capturedAt: capturedAt,
+            providers: [ProviderUsageSnapshot(
+                provider: .codex,
+                meters: [UsageMeterSnapshot(
+                    kind: .codexSession,
+                    utilization: try UtilizationPercentage(30),
+                    resetAt: capturedAt.addingTimeInterval(2 * 86_400)
+                )],
+                health: .fresh(checkedAt: capturedAt)
+            )]
+        ))
+
+        let snapshots = try await store.snapshots(since: .distantPast)
+
+        XCTAssertEqual(snapshots.first?.meters.map(\.kind), [.codexWeek])
+    }
+
+    func testLegacyReadingsFromTheLastDayOfAWeekAreRelabelledByTheirSharedReset() async throws {
+        let store = makeStore(root: try temporaryRoot())
+        let weeklyReset = UsageMonitorFixtures.baseDate.addingTimeInterval(3 * 86_400)
+        // Early in the week the reading is clearly weekly; six hours before the same reset it
+        // looks like a session on its own, but it shares the weekly reset.
+        for (offset, percent) in [(-2.5 * 86_400, 40.0), (-6 * 3600, 90.0)] {
+            let capturedAt = weeklyReset.addingTimeInterval(offset)
+            try await store.appendProviderSnapshot(
+                ProviderUsageSnapshot(
+                    provider: .codex,
+                    meters: [UsageMeterSnapshot(kind: .codexSession, utilization: try UtilizationPercentage(percent), resetAt: weeklyReset)],
+                    health: .fresh(checkedAt: capturedAt)
+                ),
+                capturedAt: capturedAt
+            )
+        }
+        // A genuine five-hour session with its own reset, read between the two weekly readings.
+        let genuineSessionAt = weeklyReset.addingTimeInterval(-30 * 3600)
+        try await store.appendProviderSnapshot(
+            ProviderUsageSnapshot(
+                provider: .codex,
+                meters: [UsageMeterSnapshot(kind: .codexSession, utilization: try UtilizationPercentage(10), resetAt: genuineSessionAt.addingTimeInterval(4 * 3600))],
+                health: .fresh(checkedAt: genuineSessionAt)
+            ),
+            capturedAt: genuineSessionAt
+        )
+
+        let snapshots = try await store.snapshots(since: .distantPast)
+        let latest = try await store.latestUsableProviderSnapshots()
+
+        XCTAssertEqual(snapshots.flatMap(\.meters).map(\.kind), [.codexWeek, .codexSession, .codexWeek])
+        XCTAssertEqual(latest[.codex]?.meters.map(\.kind), [.codexWeek])
+    }
+
+    func testRelabelHorizonBoundary() {
+        let capturedAt = UsageMonitorFixtures.baseDate
+        func kind(resettingIn interval: TimeInterval) -> MeterKind? {
+            HistorySnapshotAssembler.normalizedLegacyMeters(
+                ProviderUsageSnapshot(
+                    provider: .codex,
+                    meters: [UsageMeterSnapshot(
+                        kind: .codexSession,
+                        utilization: try! UtilizationPercentage(10),
+                        resetAt: capturedAt.addingTimeInterval(interval)
+                    )],
+                    health: .fresh(checkedAt: capturedAt)
+                ),
+                capturedAt: capturedAt
+            ).meters.first?.kind
+        }
+
+        XCTAssertEqual(kind(resettingIn: 5 * 3600), .codexSession)
+        XCTAssertEqual(kind(resettingIn: 24 * 3600), .codexSession)
+        XCTAssertEqual(kind(resettingIn: 24 * 3600 + 60), .codexWeek)
+    }
+
     private func providerSnapshot(_ provider: ProviderID, kinds: [MeterKind], percent: Double, capturedAt: Date) -> ProviderUsageSnapshot {
         ProviderUsageSnapshot(
             provider: provider,

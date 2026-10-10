@@ -178,6 +178,14 @@ final class UsageAnalyticsTests: XCTestCase {
         XCTAssertFalse(points.contains { $0.preservesResetDiscontinuity })
     }
 
+    func testResetToleranceBoundary() {
+        let reset = UsageMonitorFixtures.baseDate
+        XCTAssertTrue(UsageAnalytics.isSameResetWindow(reset, reset.addingTimeInterval(9 * 60)))
+        XCTAssertTrue(UsageAnalytics.isSameResetWindow(reset, reset.addingTimeInterval(-10 * 60)))
+        XCTAssertFalse(UsageAnalytics.isSameResetWindow(reset, reset.addingTimeInterval(11 * 60)))
+        XCTAssertFalse(UsageAnalytics.isSameResetWindow(reset, reset.addingTimeInterval(5 * 3600)))
+    }
+
     func testARealResetIsStillADiscontinuity() throws {
         let base = UsageMonitorFixtures.baseDate
         let samples = [

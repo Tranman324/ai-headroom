@@ -1043,6 +1043,24 @@ final class ClaudeUsageProviderTests: XCTestCase {
         ))
     }
 
+    func testAWindowIsJudgedLiveBeforeItsResetIsRounded() async throws {
+        // 20 seconds left: rounding first would put the reset in the past and drop a live meter.
+        let provider = ClaudeUsageProvider(
+            cli: StubClaudeCLI(statuses: [loggedInStatus], usage: .success(ClaudeUsageLimits(
+                fiveHour: ClaudeUsageLimitWindow(utilization: 95, resetsAt: checkedAt.addingTimeInterval(20)),
+                sevenDay: ClaudeUsageLimitWindow(utilization: 50, resetsAt: checkedAt.addingTimeInterval(-20))
+            ))),
+            usageCache: StubClaudeUsageCache(cache: nil),
+            statusLineInstaller: StubClaudeStatusLineInstaller(installed: false),
+            overrides: automaticSource,
+            clock: FixedClock(now: checkedAt)
+        )
+
+        let snapshot = try await provider.fetchUsageSnapshot()
+
+        XCTAssertEqual(snapshot.meters.map(\.kind), [.claudeSession])
+    }
+
     func testLiveResetTimesAreRoundedToTheMinuteSoJitterDoesNotSplitAWindow() async throws {
         let reset = checkedAt.addingTimeInterval(2 * 60 * 60)
         let provider = ClaudeUsageProvider(

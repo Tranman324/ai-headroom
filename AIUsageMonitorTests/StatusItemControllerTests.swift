@@ -224,6 +224,20 @@ final class StatusItemControllerTests: XCTestCase {
         }
     }
 
+    func testPercentageBelowSeventyUsesTheMenuBarsOwnTextColour() throws {
+        for snapshot in [UsageMonitorFixtures.normalSnapshot, UsageMonitorFixtures.noDataSnapshot] {
+            let controller = StatusItemController(store: makeStore(snapshot: snapshot))
+            let button = try XCTUnwrap(controller.statusItem.button)
+            let colour = button.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+
+            XCTAssertTrue(try XCTUnwrap(button.image).isTemplate)
+            XCTAssertTrue(
+                colour == nil || colour == .controlTextColor || colour == .labelColor,
+                "Below 70% the percentage must be drawn like the menu bar clock, not in \(String(describing: colour))"
+            )
+        }
+    }
+
     func testWarningPercentageIsAmberWhileTheGlyphStaysMonochrome() throws {
         let controller = StatusItemController(store: makeStore(snapshot: UsageMonitorFixtures.warningSnapshot))
         let button = try XCTUnwrap(controller.statusItem.button)
