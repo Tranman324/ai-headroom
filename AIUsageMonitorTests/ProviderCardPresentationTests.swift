@@ -685,6 +685,60 @@ final class PopoverDesignEvidenceTests: XCTestCase {
         XCTAssertGreaterThan(today.size.height - error.size.height, 40, "An errored account collapses to its reason")
     }
 
+    func testNoDataPopoverShowsQuietRowsAndEmptyHistory() throws {
+        // The UI suite's "no-data" fixture: nothing connected yet, history expanded.
+        let snapshot = UsageMonitorFixtures.noDataSnapshot
+        let store = UsageMonitorStore(
+            dependencies: AppCompositionRoot.fixture(snapshot: snapshot, historySnapshots: []),
+            initialSnapshot: snapshot,
+            navigation: AppNavigationState(isHistoryExpanded: true)
+        )
+
+        let bitmap = try render(makeHost(store, showsCreditList: false))
+
+        XCTAssertEqual(brightPixelsInSideMargins(bitmap), 0)
+        if let directory = evidenceDirectory() {
+            let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            try data.write(to: directory.appendingPathComponent("popover-no-data@2x.png"))
+        }
+    }
+
+    func testModelRowBarsAreIndentedTwelvePointsUnderTheWeeklyMeter() throws {
+        // Critical scenario: Session 64% (Claude accent bar), Fable 71% (amber, 3 pt bar).
+        let bitmap = try render(makeHost(store(.critical), showsCreditList: false))
+        let scale = Double(bitmap.pixelsWide) / bitmap.size.width
+        let sessionStart = try XCTUnwrap(leftmostBarPixel(near: UsagePalette.claudeAccent, in: bitmap, minimumRun: 60))
+        let fableStart = try XCTUnwrap(leftmostBarPixel(near: UsagePalette.warning, in: bitmap, minimumRun: 60))
+
+        XCTAssertEqual(Double(fableStart - sessionStart) / scale, 12, accuracy: 1)
+    }
+
+    /// Leftmost x of the first long horizontal run of `color`, i.e. where a meter bar starts.
+    private func leftmostBarPixel(near color: NSColor, in bitmap: NSBitmapImageRep, minimumRun: Int) -> Int? {
+        let target = color.usingColorSpace(.deviceRGB) ?? color
+        for y in 0..<bitmap.pixelsHigh {
+            var runStart: Int?
+            for x in 0..<bitmap.pixelsWide {
+                var matches = false
+                if let pixel = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) {
+                    let red = abs(pixel.redComponent - target.redComponent)
+                    let green = abs(pixel.greenComponent - target.greenComponent)
+                    let blue = abs(pixel.blueComponent - target.blueComponent)
+                    matches = red + green + blue < 0.1
+                }
+                if matches {
+                    runStart = runStart ?? x
+                    if x - runStart! + 1 >= minimumRun {
+                        return runStart
+                    }
+                } else {
+                    runStart = nil
+                }
+            }
+        }
+        return nil
+    }
+
     private var now: Date {
         Date(timeIntervalSince1970: 1_791_661_500)
     }
