@@ -123,6 +123,35 @@ final class UsagePollingCoordinatorTests: XCTestCase {
         await store.stopMonitoring()
     }
 
+    func testResetCreditsReachTheStoreAndSurviveAFailedPoll() async throws {
+        let codex = try XCTUnwrap(UsageMonitorFixtures.normalSnapshot.provider(.codex))
+        let credits = RateLimitResetCredits(
+            availableCount: 2,
+            credits: [RateLimitResetCredit(title: "Full reset", expiresAt: UsageMonitorFixtures.baseDate.addingTimeInterval(19 * 86_400))]
+        )
+        let withCredits = ProviderUsageSnapshot(provider: .codex, meters: codex.meters, health: codex.health, resetCredits: credits)
+        let connectivity = PassiveConnectivityMonitor(initialState: .offline)
+        let store = makeStore(
+            providers: [RecordingProviderClient(provider: .codex, results: [
+                .success(withCredits),
+                .failure(ProviderClientFailure.transport(provider: .codex))
+            ])],
+            connectivityMonitor: connectivity
+        )
+
+        await store.startMonitoring()
+        connectivity.set(.online)
+        await store.refresh()
+        let afterSuccess = store.snapshot.provider(.codex)?.resetCredits
+        await store.refresh()
+        let afterFailure = store.snapshot.provider(.codex)
+
+        XCTAssertEqual(afterSuccess, credits)
+        XCTAssertEqual(afterFailure?.health.kind, .stale)
+        XCTAssertEqual(afterFailure?.resetCredits, credits, "A failed poll keeps the last known credits with the stale meters")
+        await store.stopMonitoring()
+    }
+
     func testStateUpdatesWhenProviderHistoryAppendFails() async throws {
         let history = RecordingHistoryStore(failingOperations: [.appendProviderSnapshot])
         let connectivity = PassiveConnectivityMonitor(initialState: .offline)

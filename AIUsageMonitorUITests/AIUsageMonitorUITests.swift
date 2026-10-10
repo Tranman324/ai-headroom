@@ -54,14 +54,16 @@ final class AIUsageMonitorUITests: XCTestCase {
         XCTAssertGreaterThan(evidence.bitmap.pixelCount(near: TestPalette.codexAccent), 100)
     }
 
-    func testModelMeterBarAlignsWithPrimaryMeterBar() throws {
+    func testModelMeterBarIsIndentedUnderItsWeeklyMeter() throws {
+        // The account-states design nests per-model rows 12 pt under the weekly meter.
         let app = launchInteractiveFixture(scenario: "critical", historyExpanded: false)
         let primaryBar = element(in: app, identifier: "meter-bar-claudeSession")
         let modelBar = element(in: app, identifier: "meter-bar-claudeWeekFable")
 
         XCTAssertTrue(primaryBar.waitForExistence(timeout: 5))
         XCTAssertTrue(modelBar.waitForExistence(timeout: 5))
-        XCTAssertEqual(modelBar.frame.minX, primaryBar.frame.minX, accuracy: 1)
+        XCTAssertEqual(modelBar.frame.minX, primaryBar.frame.minX + 12, accuracy: 1)
+        XCTAssertEqual(modelBar.frame.maxX, primaryBar.frame.maxX, accuracy: 1)
     }
 
     func testStaleFixtureRendersProviderLocalHealthAndNonblankPixels() throws {

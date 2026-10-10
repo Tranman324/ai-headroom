@@ -177,23 +177,18 @@ private struct UsageListScreen: View {
     var run: (AppIntentCommand) -> Void
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 0) {
             header
-            separator
-            ProviderUsageSection(
-                providerID: .claude,
-                provider: store.snapshot.provider(.claude),
-                orderedKinds: UsageMeterOrder.claude,
-                capturedAt: store.snapshot.capturedAt,
-                run: run
-            )
-            ProviderUsageSection(
-                providerID: .codex,
-                provider: store.snapshot.provider(.codex),
-                orderedKinds: UsageMeterOrder.codex,
-                capturedAt: store.snapshot.capturedAt,
-                run: run
-            )
+                .padding(.bottom, 2)
+            ForEach(Array(cards.enumerated()), id: \.element.provider) { index, card in
+                ProviderCardView(card: card, showsDivider: index > 0, run: run)
+                    // Later sections draw above earlier ones so the credits list can rise over them.
+                    .zIndex(Double(index))
+            }
+            Rectangle()
+                .fill(Color.white.opacity(0.07))
+                .frame(height: 1)
+                .padding(.top, 6)
             HistorySection(
                 isExpanded: store.navigation.isHistoryExpanded,
                 series: UsagePresentation.historySeries(
@@ -204,19 +199,34 @@ private struct UsageListScreen: View {
             ) {
                 run(.setHistoryExpanded(!store.navigation.isHistoryExpanded))
             }
+            .padding(.top, 2)
+            footer
+        }
+    }
+
+    private var cards: [ProviderCardPresentation] {
+        ProviderID.allCases.map { provider in
+            ProviderCardPresenter.card(
+                provider: provider,
+                snapshot: store.snapshot,
+                history: store.historicalSnapshots,
+                connection: store.providerConnectionStatuses[provider],
+                alertThreshold: store.settings.alertThreshold.percentage
+            )
         }
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "gauge")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(UsagePalette.claudeAccent.swiftUIColor)
-                .frame(width: 20, height: 24)
+        HStack(spacing: 7) {
+            Image(nsImage: StatusItemGaugeRenderer.glyphImage(utilization: store.snapshot.hottestMeter?.utilization.value))
+                .renderingMode(.template)
+                .resizable()
+                .frame(width: 14, height: 14)
+                .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
                 .accessibilityHidden(true)
 
             Text("AI Usage")
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 12.5, weight: .semibold))
                 .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
 
             Spacer()
@@ -228,10 +238,11 @@ private struct UsageListScreen: View {
             ) {
                 run(.refresh)
             }
-            .help("Refresh Now")
+            .keyboardShortcut("r", modifiers: .command)
+            .help("Refresh Now (⌘R)")
 
             IconButton(
-                systemName: "gearshape",
+                systemName: "slider.horizontal.3",
                 accessibilityLabel: "Settings",
                 identifier: "popover-settings-button"
             ) {
@@ -239,274 +250,383 @@ private struct UsageListScreen: View {
             }
             .help("Settings")
         }
-        .frame(height: 28)
+        .frame(height: 26)
     }
 
-    private var separator: some View {
-        Rectangle()
-            .fill(Color.white.opacity(0.08))
-            .frame(height: 1)
+    private var footer: some View {
+        HStack {
+            Text("Updated \(updatedText)")
+                .monospacedDigit()
+            Spacer()
+            Text("⌘R refresh")
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(UsagePalette.faintText.swiftUIColor)
+        .padding(.top, 7)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.white.opacity(0.06))
+                .frame(height: 1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("popover-footer")
     }
 
+    private var updatedText: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "h:mm:ss a"
+        return formatter.string(from: store.snapshot.capturedAt)
+    }
 }
 
-private struct ProviderUsageSection: View {
-    var providerID: ProviderID
-    var provider: ProviderUsageSnapshot?
-    var orderedKinds: [MeterKind]
-    var capturedAt: Date
+private struct ProviderCardView: View {
+    var card: ProviderCardPresentation
+    var showsDivider: Bool
     var run: (AppIntentCommand) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(UsagePalette.accent(for: providerID).swiftUIColor)
-                    .frame(width: 7, height: 7)
-                    .accessibilityHidden(true)
-
-                Text(providerID == .claude ? "CLAUDE MAX" : "OPENAI CODEX")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(UsagePalette.allModels.swiftUIColor)
-                    .tracking(1.1)
-
-                if providerID == .codex {
-                    Text("Pro")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(UsagePalette.codexAccent.swiftUIColor)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1.5)
-                        .background(
-                            Capsule()
-                                .stroke(UsagePalette.codexAccent.swiftUIColor.opacity(0.42), lineWidth: 1)
-                        )
-                        .accessibilityIdentifier("codex-plan-badge")
-                }
-
-                Spacer()
-
-                if let healthLabel {
-                    Text(healthLabel)
-                        .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(healthColor.swiftUIColor)
-                        .lineLimit(1)
-                        .accessibilityElement()
-                        .accessibilityLabel(healthLabel)
-                        .accessibilityIdentifier("\(providerID.rawValue)-health-label")
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            if showsDivider {
+                Rectangle()
+                    .fill(Color.white.opacity(0.07))
+                    .frame(height: 1)
+                    .padding(.vertical, 6)
             }
-            .frame(height: 18)
 
-            if let provider, !provider.meters.isEmpty {
-                ForEach(orderedMeters(from: provider)) { meter in
-                    UsageMeterRow(
-                        meter: meter,
-                        capturedAt: capturedAt,
-                        isModelRow: isModelRow(meter.kind),
-                        run: run
-                    )
-                }
+            header
+                .padding(.top, 4)
+                .padding(.bottom, 2)
 
-                if let healthDetail {
-                    Text(healthDetail)
-                        .font(.system(size: 9.5, weight: .regular))
-                        .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .accessibilityIdentifier("\(providerID.rawValue)-health-detail")
+            if let reason = card.reason {
+                reasonBox(reason)
+            }
+
+            if card.showsMeters {
+                VStack(spacing: 0) {
+                    ForEach(card.leadingMeters) { row in
+                        CardMeterRow(row: row, estimate: nil, provider: card.provider, run: run)
+                    }
+                    if let primary = card.primaryMeter {
+                        CardMeterRow(row: primary, estimate: card.estimate, provider: card.provider, run: run)
+                    }
+                    ForEach(card.modelMeters) { row in
+                        CardMeterRow(row: row, estimate: nil, provider: card.provider, run: run)
+                    }
                 }
-            } else {
-                NoDataProviderRow(providerID: providerID)
+                .opacity(card.meterOpacity)
+            }
+
+            if let credits = card.credits, card.showsMeters {
+                ResetCreditsRow(credits: credits)
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(providerID == .claude ? "Claude Max usage meters" : "OpenAI Codex usage meters")
-        .accessibilityIdentifier("\(providerID.rawValue)-provider-section")
+        .accessibilityLabel(card.provider == .claude ? "Claude usage" : "OpenAI Codex usage")
+        .accessibilityIdentifier("\(card.provider.rawValue)-provider-section")
     }
 
-    private var healthLabel: String? {
-        guard let provider else {
-            return "No data"
+    /// Badges never wrap; if a narrow layout cannot fit everything, the countdown goes first.
+    private var header: some View {
+        ViewThatFits(in: .horizontal) {
+            headerRow(showsCountdown: true)
+            headerRow(showsCountdown: false)
         }
+        .frame(minHeight: 18)
+    }
 
-        switch provider.health.kind {
-        case .fresh:
-            return nil
+    private func headerRow(showsCountdown: Bool) -> some View {
+        HStack(spacing: 5) {
+            Text(card.title)
+                .font(.system(size: 10.5, weight: .semibold))
+                .tracking(0.9)
+                .foregroundStyle(UsagePalette.allModels.swiftUIColor)
+                .fixedSize()
+
+            if let plan = card.planBadge {
+                Text(plan)
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .tracking(0.4)
+                    .foregroundStyle(accent)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .overlay(Capsule().stroke(accent.opacity(0.4), lineWidth: 1))
+                    .fixedSize()
+                    .accessibilityIdentifier("\(card.provider.rawValue)-plan-badge")
+            }
+
+            if let pill = statusPill {
+                Text(pill.text)
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .tracking(0.4)
+                    .foregroundStyle(pill.color.swiftUIColor)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1.5)
+                    .background(Capsule().fill(pill.color.swiftUIColor.opacity(pill.backgroundOpacity)))
+                    .fixedSize()
+                    .accessibilityIdentifier("\(card.provider.rawValue)-health-label")
+            }
+
+            Spacer(minLength: 0)
+
+            if card.state == .normal || card.state == .stale, let lead = card.resetLead {
+                HStack(spacing: 4) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+                    Text(lead)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
+                    if showsCountdown, let countdown = card.resetCountdown {
+                        Text(countdown)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+                    }
+                }
+                .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize()
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Resets \(lead), in \(card.resetCountdown ?? "")")
+                .accessibilityIdentifier("\(card.provider.rawValue)-reset-lead")
+            }
+        }
+    }
+
+    private func reasonBox(_ reason: String) -> some View {
+        HStack(spacing: 8) {
+            Text(reason)
+                .font(.system(size: 10.5))
+                .foregroundStyle(reasonColor.swiftUIColor)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let action = card.reasonAction {
+                Button(action.title) {
+                    run(action.command(for: card.provider))
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
+                .accessibilityIdentifier("\(card.provider.rawValue)-reason-action")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(reasonBackground))
+        .padding(.top, 4)
+        .padding(.bottom, card.showsMeters ? 6 : 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("\(card.provider.rawValue)-health-detail")
+    }
+
+    private var accent: Color {
+        UsagePalette.accent(for: card.provider).swiftUIColor
+    }
+
+    private var statusPill: (text: String, color: NSColor, backgroundOpacity: Double)? {
+        switch card.state {
         case .stale:
-            return "Stale"
-        case .errored:
-            return "Error"
-        case .noData:
-            return "No data"
-        }
-    }
-
-    private var healthDetail: String? {
-        guard let provider else {
-            return nil
-        }
-
-        switch provider.health.kind {
-        case .fresh:
-            return nil
-        case .stale:
-            return provider.health.error?.displayMessage ?? "Using last known values."
-        case .errored:
-            return provider.health.error?.displayMessage ?? "Unable to refresh usage."
-        case .noData:
+            return ("STALE", UsagePalette.warning, 0.14)
+        case .error:
+            return ("ERROR", UsagePalette.criticalText, 0.16)
+        case .normal, .notConnected:
             return nil
         }
     }
 
-    private var healthColor: NSColor {
-        guard let provider else {
-            return UsagePalette.mutedText
-        }
-
-        switch provider.health.kind {
-        case .fresh:
-            return UsagePalette.mutedText
+    private var reasonColor: NSColor {
+        switch card.state {
         case .stale:
             return UsagePalette.warning
-        case .errored:
-            return UsagePalette.critical
-        case .noData:
+        case .error:
+            return UsagePalette.errorReasonText
+        case .normal, .notConnected:
             return UsagePalette.mutedText
         }
     }
 
-    private func orderedMeters(from provider: ProviderUsageSnapshot) -> [UsageMeterSnapshot] {
-        orderedKinds.compactMap { kind in
-            provider.meters.first { $0.kind == kind }
-        }
-    }
-
-    private func isModelRow(_ kind: MeterKind) -> Bool {
-        switch kind {
-        case .claudeWeekFable, .claudeWeekSonnet, .claudeWeekHaiku:
-            return true
-        case .claudeSession, .claudeWeekAll, .codexSession, .codexWeek:
-            return false
+    private var reasonBackground: Color {
+        switch card.state {
+        case .stale:
+            return UsagePalette.warning.swiftUIColor.opacity(0.08)
+        case .error:
+            return UsagePalette.critical.swiftUIColor.opacity(0.1)
+        case .normal, .notConnected:
+            return Color.white.opacity(0.04)
         }
     }
 }
 
-private struct UsageMeterRow: View {
-    var meter: UsageMeterSnapshot
-    var capturedAt: Date
-    var isModelRow: Bool
+private struct CardMeterRow: View {
+    var row: MeterRowPresentation
+    var estimate: UsageEstimatePresentation?
+    var provider: ProviderID
     var run: (AppIntentCommand) -> Void
 
     @State private var isHovering = false
 
     var body: some View {
         Button {
-            run(.showMeterDetail(meter.kind))
+            run(.showMeterDetail(row.kind))
         } label: {
-            VStack(spacing: 4) {
-                HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(UsagePresentation.compactLabel(for: meter.kind))
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(labelColor)
-                            .lineLimit(1)
-
-                        Text(UsagePresentation.resetLabel(for: meter, capturedAt: capturedAt))
-                            .font(.system(size: 9.5, weight: .regular))
-                            .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
-                            .lineLimit(1)
-                    }
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(row.label)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle((row.isModelRow ? UsagePalette.allModels : UsagePalette.primaryText).swiftUIColor)
+                        .lineLimit(1)
 
                     Spacer(minLength: 8)
 
-                    Text("\(Int(round(meter.utilization.value)))%")
-                        .font(.system(size: 11.5, weight: .medium, design: .monospaced))
-                        .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
-                        .frame(width: 42, alignment: .trailing)
-                        .accessibilityIdentifier("meter-percent-\(meter.kind.rawValue)")
-                }
+                    if let trailing = row.trailingText {
+                        Text(trailing)
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+                            .monospacedDigit()
+                    }
 
-                UsageProgressBar(meter: meter, height: isModelRow ? UsagePopoverMetrics.modelBarHeight : UsagePopoverMetrics.primaryBarHeight)
+                    Text(row.percentText)
+                        .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(row.percentColor.swiftUIColor)
+                        .frame(minWidth: 32, alignment: .trailing)
+                        .accessibilityIdentifier("meter-percent-\(row.kind.rawValue)")
+                }
+                .padding(.bottom, 4)
+
+                CardMeterBar(row: row)
+
+                if let estimate {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(estimate.dotColor.swiftUIColor)
+                            .frame(width: 6, height: 6)
+                        Text(estimate.text)
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(estimate.textColor.swiftUIColor)
+                            .lineLimit(1)
+                        Spacer(minLength: 6)
+                        Text(estimate.basis)
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(UsagePalette.faintText.swiftUIColor)
+                    }
+                    .padding(.top, 6)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("\(provider.rawValue)-estimate")
+                }
             }
-            .frame(height: isModelRow ? UsagePopoverMetrics.modelRowHeight : UsagePopoverMetrics.primaryRowHeight)
+            .padding(.leading, row.isModelRow ? 12 : 0)
+            .padding(.top, row.isModelRow ? 4 : 6)
+            .padding(.bottom, row.isModelRow ? 6 : 7)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .background(
             RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .fill(Color.white.opacity(isHovering ? 0.045 : 0))
+                .padding(.horizontal, -6)
         )
         .onHover { isHovering = $0 }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityIdentifier("meter-row-\(meter.kind.rawValue)")
-    }
-
-    private var labelColor: Color {
-        isModelRow ? UsagePalette.mutedText.swiftUIColor : UsagePalette.primaryText.swiftUIColor
-    }
-
-    private var accessibilityLabel: String {
-        "\(UsagePresentation.compactLabel(for: meter.kind)), \(Int(round(meter.utilization.value)))%, \(UsagePresentation.resetLabel(for: meter, capturedAt: capturedAt))"
+        .accessibilityLabel(row.accessibilityLabel + (estimate.map { ", \($0.text)" } ?? ""))
+        .accessibilityIdentifier("meter-row-\(row.kind.rawValue)")
     }
 }
 
-private struct UsageProgressBar: View {
-    var meter: UsageMeterSnapshot
-    var height: CGFloat
+private struct CardMeterBar: View {
+    var row: MeterRowPresentation
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(UsagePalette.inset.swiftUIColor)
+                    .fill(Color.white.opacity(0.07))
 
                 Capsule()
-                    .fill(UsagePresentation.barColor(for: meter).swiftUIColor)
-                    .frame(width: geometry.size.width * CGFloat(meter.utilization.value / 100))
+                    .fill(row.fillColor.swiftUIColor)
+                    .frame(width: geometry.size.width * CGFloat(row.fraction))
+                    .shadow(color: row.glows ? row.fillColor.swiftUIColor.opacity(0.4) : .clear, radius: 5)
             }
         }
-        .frame(height: height)
-        .accessibilityIdentifier("meter-bar-\(meter.kind.rawValue)")
+        .frame(height: row.isModelRow ? UsagePopoverMetrics.modelBarHeight : UsagePopoverMetrics.primaryBarHeight)
+        .accessibilityIdentifier("meter-bar-\(row.kind.rawValue)")
     }
 }
 
-private struct NoDataProviderRow: View {
-    var providerID: ProviderID
+private struct ResetCreditsRow: View {
+    var credits: ResetCreditsPresentation
+
+    @State private var isHovering = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "minus.circle")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
-                .accessibilityHidden(true)
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.counterclockwise")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle((credits.hasCredits ? UsagePalette.codexAccent : UsagePalette.faintText).swiftUIColor)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("No data")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+            Text(credits.countText)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle((credits.hasCredits ? UsagePalette.primaryText : UsagePalette.mutedText).swiftUIColor)
 
-                if let hint {
-                    Text(hint)
-                        .font(.system(size: 9.5, weight: .regular))
-                        .foregroundStyle(UsagePalette.mutedText.swiftUIColor.opacity(0.8))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+            Spacer(minLength: 6)
 
-            Spacer()
+            Text(credits.expiryText)
+                .font(.system(size: 9.5))
+                .foregroundStyle((credits.isExpiringSoon ? UsagePalette.warning : UsagePalette.mutedText).swiftUIColor)
         }
-        .frame(minHeight: UsagePopoverMetrics.primaryRowHeight, alignment: .top)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(providerID.displayName) no data")
-        .accessibilityIdentifier("\(providerID.rawValue)-no-data-row")
+        .padding(.top, 4)
+        .padding(.bottom, 7)
+        .contentShape(Rectangle())
+        .background(
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Color.white.opacity(isHovering ? 0.045 : 0))
+                .padding(.horizontal, -6)
+        )
+        .onHover { isHovering = $0 }
+        .overlay(alignment: .topTrailing) {
+            if isHovering, !credits.credits.isEmpty {
+                creditList
+                    .alignmentGuide(.top) { dimensions in dimensions[.bottom] - 2 }
+                    .transition(.opacity)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+        .accessibilityIdentifier("codex-reset-credits")
     }
 
-    private var hint: String? {
-        guard providerID == .claude else {
-            return nil
+    private var creditList: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(credits.credits.enumerated()), id: \.offset) { _, credit in
+                HStack(spacing: 8) {
+                    Text(credit.title)
+                        .font(.system(size: 11))
+                        .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
+                    Spacer(minLength: 8)
+                    Text(credit.dateText)
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .underline(pattern: .dot, color: (credit.isExpiringSoon ? UsagePalette.warning : UsagePalette.primaryText).swiftUIColor.opacity(0.5))
+                        .foregroundStyle((credit.isExpiringSoon ? UsagePalette.warning : UsagePalette.primaryText).swiftUIColor)
+                        .help(credit.detail)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+            }
         }
-        return "Usage syncs while Claude Code runs in a terminal — send one message there to populate."
+        .padding(.vertical, 4)
+        .frame(width: 190)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(UsagePalette.inset.swiftUIColor))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(Color.white.opacity(0.1), lineWidth: 1))
+        .shadow(color: .black.opacity(0.55), radius: 15, y: 10)
+        .accessibilityIdentifier("codex-reset-credit-list")
+    }
+
+    private var accessibilityText: String {
+        guard credits.hasCredits else {
+            return "No rate limit resets left"
+        }
+        let details = credits.credits.map { "\($0.title), \($0.detail)" }.joined(separator: "; ")
+        return "\(credits.countText) available, \(credits.expiryText). \(details)"
     }
 }
 
@@ -1530,19 +1650,22 @@ private struct IconButton: View {
     var identifier: String
     var action: () -> Void
 
+    @State private var isHovering = false
+
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(UsagePalette.primaryText.swiftUIColor)
-                .frame(width: 26, height: 26)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(UsagePalette.mutedText.swiftUIColor)
+                .frame(width: 22, height: 22)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .background(
             RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(Color.white.opacity(0.035))
+                .fill(Color.white.opacity(isHovering ? 0.06 : 0))
         )
+        .onHover { isHovering = $0 }
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier(identifier)
     }

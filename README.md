@@ -4,7 +4,7 @@ A native macOS menu-bar app that shows how much of your **Claude** and **OpenAI 
 usage limits you have left, how fast you are burning them, and whether you will run out
 before the window resets.
 
-The app bundle is named **AI Usage Monitor**. Native Swift with no third-party dependencies, local-only storage, and 219 XCTest unit tests plus fixture-driven UI tests.
+The app bundle is named **AI Usage Monitor**. Native Swift with no third-party dependencies, local-only storage, and 238 XCTest unit tests plus fixture-driven UI tests.
 
 ## Why it exists
 
@@ -18,7 +18,13 @@ pace, do you hit 100% before reset?
 - **Menu-bar gauge** for the hottest meter: a monochrome gauge and percentage below 70%,
   an amber percentage from 70%, and a red capsule from 90%. The gauge is a template image,
   so the menu bar tints it like its own icons on any wallpaper.
-- **Popover** with each provider's meters, reset countdowns, and a 7-day history chart.
+- **Popover** with one section per account: when its weekly limit resets ("tonight
+  8:00 PM · 4h 15m"), its meters, and an estimate of when you'll hit the limit at your
+  current pace ("Hits 100% ~6:20 PM, before reset", based on the last 3 hours, or the
+  last 24 hours when the reset is days away). Codex also shows how many free rate-limit
+  resets you have left and when they expire; hover for each one. Stale, error, and
+  not-connected accounts say why and offer Retry, Sign in, or Connect. A 7-day history
+  chart sits below.
 - **Meter detail** with a 30-minute burn rate, a projection line to 100%, and
   24h / 3d / 7d ranges.
 
@@ -55,7 +61,9 @@ old is stale and shows why live data failed. With no usable cache, the failure i
 shown as an error rather than an empty "no data" state.
 
 **Codex.** The app starts `codex app-server --stdio` and asks it for the account plan
-and rate limits over JSON-RPC (`account/read`, `account/rateLimits/read`). Signing in
+and rate limits over JSON-RPC (`account/read`, `account/rateLimits/read`), including
+the count and expiry dates of any free rate-limit reset credits (their IDs are never
+kept, and credits are not written to history). Signing in
 uses the CLI's device-code flow. One slow answer is tolerated; if the app-server misses
 two in a row, it is stopped (force-killed if it ignores the request) and restarted on the
 next poll. If it exits at startup, the app retries once with `--listen stdio://`.

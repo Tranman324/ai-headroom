@@ -156,38 +156,6 @@ enum UsagePresentation {
         }
     }
 
-    static func compactLabel(for kind: MeterKind) -> String {
-        switch kind {
-        case .claudeSession, .codexSession:
-            return "Session"
-        case .claudeWeekAll:
-            return "Week All Models"
-        case .claudeWeekFable:
-            return "Fable"
-        case .claudeWeekSonnet:
-            return "Sonnet"
-        case .claudeWeekHaiku:
-            return "Haiku"
-        case .codexWeek:
-            return "Week"
-        }
-    }
-
-    static func resetLabel(for meter: UsageMeterSnapshot, capturedAt: Date) -> String {
-        let remaining = max(0, meter.resetAt.timeIntervalSince(capturedAt))
-        let day: TimeInterval = 24 * 60 * 60
-        let hour: TimeInterval = 60 * 60
-
-        if remaining >= day {
-            return "resets in \(Int(ceil(remaining / day)))d"
-        }
-        if remaining >= hour {
-            return "resets in \(Int(ceil(remaining / hour)))h"
-        }
-        let minutes = max(1, Int(ceil(remaining / 60)))
-        return "resets in \(minutes)m"
-    }
-
     static func historySeries(
         from snapshots: [CombinedUsageSnapshot],
         now: Date

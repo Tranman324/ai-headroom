@@ -32,6 +32,8 @@
 		B30000000000000000000002 /* PlatformAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000002 /* PlatformAdapters.swift */; };
 		B20000000000000000000031 /* UsageDesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000031 /* UsageDesignTokens.swift */; };
 		B20000000000000000000032 /* UsagePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000032 /* UsagePresentation.swift */; };
+		B40000000000000000000004 /* ProviderCardPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A40000000000000000000004 /* ProviderCardPresentation.swift */; };
+		B40000000000000000000005 /* ProviderCardPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A40000000000000000000005 /* ProviderCardPresentationTests.swift */; };
 		B20000000000000000000033 /* UsagePopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000033 /* UsagePopoverView.swift */; };
 		B20000000000000000000034 /* StatusItemController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000034 /* StatusItemController.swift */; };
 		B50000000000000000000002 /* StatusItemGaugeRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A50000000000000000000002 /* StatusItemGaugeRenderer.swift */; };
@@ -102,6 +104,8 @@
 		A30000000000000000000002 /* PlatformAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformAdapters.swift; sourceTree = "<group>"; };
 		A20000000000000000000031 /* UsageDesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageDesignTokens.swift; sourceTree = "<group>"; };
 		A20000000000000000000032 /* UsagePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsagePresentation.swift; sourceTree = "<group>"; };
+		A40000000000000000000004 /* ProviderCardPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderCardPresentation.swift; sourceTree = "<group>"; };
+		A40000000000000000000005 /* ProviderCardPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderCardPresentationTests.swift; sourceTree = "<group>"; };
 		A20000000000000000000033 /* UsagePopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsagePopoverView.swift; sourceTree = "<group>"; };
 		A20000000000000000000034 /* StatusItemController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusItemController.swift; sourceTree = "<group>"; };
 		A50000000000000000000002 /* StatusItemGaugeRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusItemGaugeRenderer.swift; sourceTree = "<group>"; };
@@ -238,6 +242,7 @@
 			children = (
 				A20000000000000000000031 /* UsageDesignTokens.swift */,
 				A20000000000000000000032 /* UsagePresentation.swift */,
+				A40000000000000000000004 /* ProviderCardPresentation.swift */,
 				A20000000000000000000033 /* UsagePopoverView.swift */,
 				A20000000000000000000034 /* StatusItemController.swift */,
 				A50000000000000000000002 /* StatusItemGaugeRenderer.swift */,
@@ -263,6 +268,7 @@
 				A1000000000000000000002F /* LocalSettingsStoreTests.swift */,
 				A1000000000000000000002A /* UsageAnalyticsTests.swift */,
 				A20000000000000000000040 /* UsagePresentationTests.swift */,
+				A40000000000000000000005 /* ProviderCardPresentationTests.swift */,
 				A20000000000000000000041 /* StatusItemControllerTests.swift */,
 				A20000000000000000000099 /* StatusItemEvidenceTests.swift */,
 				A50000000000000000000001 /* StatusItemGaugeRendererTests.swift */,
@@ -422,6 +428,7 @@
 				B1000000000000000000001A /* UsageMonitorFixtures.swift in Sources */,
 				B20000000000000000000031 /* UsageDesignTokens.swift in Sources */,
 				B20000000000000000000032 /* UsagePresentation.swift in Sources */,
+				B40000000000000000000004 /* ProviderCardPresentation.swift in Sources */,
 				B20000000000000000000033 /* UsagePopoverView.swift in Sources */,
 				B20000000000000000000034 /* StatusItemController.swift in Sources */,
 				B50000000000000000000002 /* StatusItemGaugeRenderer.swift in Sources */,
@@ -456,6 +463,7 @@
 				B1000000000000000000002F /* LocalSettingsStoreTests.swift in Sources */,
 				B1000000000000000000002A /* UsageAnalyticsTests.swift in Sources */,
 				B20000000000000000000040 /* UsagePresentationTests.swift in Sources */,
+				B40000000000000000000005 /* ProviderCardPresentationTests.swift in Sources */,
 				B20000000000000000000041 /* StatusItemControllerTests.swift in Sources */,
 				B20000000000000000000099 /* StatusItemEvidenceTests.swift in Sources */,
 				B50000000000000000000001 /* StatusItemGaugeRendererTests.swift in Sources */,

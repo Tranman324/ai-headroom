@@ -159,10 +159,15 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
         guard rateLimits.primary != nil || rateLimits.secondary != nil else {
             throw CodexAppServerFailure.malformedResponse
         }
+        // Reset credits are an optional extra; a missing or unrecognised block must not hide the limits.
+        let resetCredits = (try? decode(CodexResetCreditsResponse.self, from: rateLimitResponse))?
+            .rateLimitResetCredits?
+            .summary
         return CodexAppServerUsage(
             planType: account.planType,
             primaryWindow: rateLimits.primary.map(\.usageWindow),
-            secondaryWindow: rateLimits.secondary.map(\.usageWindow)
+            secondaryWindow: rateLimits.secondary.map(\.usageWindow),
+            resetCredits: resetCredits
         )
     }
 
@@ -515,6 +520,32 @@ private struct CodexAccount: Decodable {
 
 private struct CodexRateLimitResponse: Decodable {
     var rateLimits: CodexRateLimits
+}
+
+private struct CodexResetCreditsResponse: Decodable {
+    var rateLimitResetCredits: CodexResetCreditsSummary?
+}
+
+private struct CodexResetCreditsSummary: Decodable {
+    var availableCount: Int
+    var credits: [CodexResetCredit]?
+
+    var summary: RateLimitResetCredits {
+        RateLimitResetCredits(
+            availableCount: max(0, availableCount),
+            credits: (credits ?? [])
+                .filter { $0.status == nil || $0.status == "available" }
+                .map { RateLimitResetCredit(title: $0.title, expiresAt: $0.expiresAt.map(Date.init(timeIntervalSince1970:))) }
+                .sorted { ($0.expiresAt ?? .distantFuture) < ($1.expiresAt ?? .distantFuture) }
+        )
+    }
+}
+
+/// The opaque credit `id` is deliberately not decoded.
+private struct CodexResetCredit: Decodable {
+    var status: String?
+    var title: String?
+    var expiresAt: Double?
 }
 
 private struct CodexRateLimits: Decodable {

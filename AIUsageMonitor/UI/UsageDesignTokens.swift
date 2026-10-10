@@ -26,6 +26,9 @@ enum UsagePalette {
     static let warning = NSColor(hex: 0xE3B341)
     static let critical = NSColor(hex: 0xE5484D)
     static let allModels = NSColor(hex: 0xB4B0AA)
+    static let faintText = NSColor(hex: 0x6E6A64)
+    static let criticalText = NSColor(hex: 0xF07478)
+    static let errorReasonText = NSColor(hex: 0xF2A6A9)
     static let sonnet = NSColor(hex: 0xC2A26B)
     static let haiku = NSColor(hex: 0x8FA0B8)
     static let statusWarning = adaptiveStatusColor(

@@ -421,7 +421,8 @@ actor UsagePollingCoordinator {
                             snapshot: ProviderUsageSnapshot(
                                 provider: provider,
                                 meters: snapshot.meters,
-                                health: health
+                                health: health,
+                                resetCredits: snapshot.resetCredits
                             ),
                             failure: nil
                         )
@@ -469,7 +470,8 @@ actor UsagePollingCoordinator {
                     ?? previousProvider.health.checkedAt
                     ?? previousSnapshot.capturedAt,
                 error: error
-            )
+            ),
+            resetCredits: previousProvider.resetCredits
         )
     }
 

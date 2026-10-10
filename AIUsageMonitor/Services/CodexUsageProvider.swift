@@ -15,6 +15,19 @@ struct CodexAppServerUsage: Equatable, Sendable {
     var planType: String?
     var primaryWindow: CodexAppServerUsageWindow?
     var secondaryWindow: CodexAppServerUsageWindow?
+    var resetCredits: RateLimitResetCredits?
+
+    init(
+        planType: String?,
+        primaryWindow: CodexAppServerUsageWindow?,
+        secondaryWindow: CodexAppServerUsageWindow?,
+        resetCredits: RateLimitResetCredits? = nil
+    ) {
+        self.planType = planType
+        self.primaryWindow = primaryWindow
+        self.secondaryWindow = secondaryWindow
+        self.resetCredits = resetCredits
+    }
 }
 
 struct CodexAppServerUsageWindow: Equatable, Sendable {
@@ -46,7 +59,8 @@ struct CodexUsageProvider: UsageProviderFetching, ProviderAuthenticationManaging
             return ProviderUsageSnapshot(
                 provider: provider,
                 meters: meters,
-                health: meters.isEmpty ? .noData(checkedAt: clock.now) : .fresh(checkedAt: clock.now)
+                health: meters.isEmpty ? .noData(checkedAt: clock.now) : .fresh(checkedAt: clock.now),
+                resetCredits: usage.resetCredits
             )
         } catch let failure as CodexAppServerFailure {
             throw providerFailure(for: failure)
