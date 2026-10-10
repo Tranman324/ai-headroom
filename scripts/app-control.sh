@@ -1,4 +1,5 @@
-# Shared helpers for install.sh and rollback.sh. Expects APP_NAME and INSTALL_PATH.
+# Shared helpers for install.sh and rollback.sh. Expects APP_NAME, INSTALL_PATH, and BACKUP_DIR.
+# AI_USAGE_MONITOR_SKIP_LAUNCH=1 skips relaunching (used when rehearsing against a temp folder).
 
 quit_app() {
     local executable="${INSTALL_PATH}/Contents/MacOS/${APP_NAME}"
@@ -16,7 +17,43 @@ quit_app() {
     sleep 1
 }
 
-# Swaps the bundle into place so a failed copy never leaves /Applications without an app.
+launch_app() {
+    if [[ "${AI_USAGE_MONITOR_SKIP_LAUNCH:-0}" != "1" ]]; then
+        open "${INSTALL_PATH}"
+    fi
+}
+
+# Backups are named "<APP_NAME> <yyyymmdd-HHMMSS>.app" (saved by install.sh) or
+# "<APP_NAME> replaced <yyyymmdd-HHMMSS>.app" (the build a rollback replaced). Ordering uses the
+# timestamp in the name; ditto keeps each bundle's build-time mtime, so mtime is not usable.
+install_backups() {
+    find "${BACKUP_DIR}" -maxdepth 1 -name "${APP_NAME} [0-9]*.app" 2>/dev/null | sort -r
+}
+
+replaced_backups() {
+    find "${BACKUP_DIR}" -maxdepth 1 -name "${APP_NAME} replaced [0-9]*.app" 2>/dev/null | sort -r
+}
+
+# Prints a backup path that does not exist yet for the given label ("" or "replaced ").
+new_backup_path() {
+    local label="$1"
+    local stamp
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    local candidate="${BACKUP_DIR}/${APP_NAME} ${label}${stamp}.app"
+    local counter=1
+    while [[ -e "${candidate}" ]]; do
+        candidate="${BACKUP_DIR}/${APP_NAME} ${label}${stamp}-${counter}.app"
+        counter=$((counter + 1))
+    done
+    echo "${candidate}"
+}
+
+ensure_backup_dir() {
+    mkdir -p "${BACKUP_DIR}"
+    chmod 700 "${BACKUP_DIR}"
+}
+
+# Swaps the bundle into place so a failed copy never leaves the install path without an app.
 replace_installed_app() {
     local source_app="$1"
     local incoming="${INSTALL_PATH%.app}.incoming.app"

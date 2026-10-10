@@ -4,13 +4,15 @@ import SwiftUI
 @main
 enum AIUsageMonitorEntryPoint {
     static func main() {
-        ProcessSignalPolicy.ignoreBrokenPipes()
         let firstArgument = CommandLine.arguments.dropFirst().first
         if firstArgument == ClaudeStatusLineInstaller.bridgeArgument {
             Darwin.exit(ClaudeStatusLineBridgeCommand.run(
                 forwardsInput: CommandLine.arguments.contains(ClaudeStatusLineInstaller.forwardArgument)
             ))
         }
+        // Only the app and diagnostics drive CLIs over pipes; the status-line bridge keeps the
+        // default SIGPIPE behavior it has always had.
+        ProcessSignalPolicy.ignoreBrokenPipes()
         if firstArgument == ProviderDiagnosticsCommand.argument {
             Darwin.exit(ProviderDiagnosticsCommand.runBlocking())
         }

@@ -4,7 +4,7 @@ A native macOS menu-bar app that shows how much of your **Claude** and **OpenAI 
 usage limits you have left, how fast you are burning them, and whether you will run out
 before the window resets.
 
-The app bundle is named **AI Usage Monitor**. Native Swift with no third-party dependencies, local-only storage, and 185 XCTest unit tests plus fixture-driven UI tests.
+The app bundle is named **AI Usage Monitor**. Native Swift with no third-party dependencies, local-only storage, and 195 XCTest unit tests plus fixture-driven UI tests.
 
 ## Why it exists
 
@@ -54,14 +54,16 @@ shown as an error rather than an empty "no data" state.
 
 **Codex.** The app starts `codex app-server --stdio` and asks it for the account plan
 and rate limits over JSON-RPC (`account/read`, `account/rateLimits/read`). Signing in
-uses the CLI's device-code flow. If the app-server stops answering, it is restarted on
-the next poll. If it exits at startup, the app retries once without `--stdio`.
+uses the CLI's device-code flow. One slow answer is tolerated; if the app-server misses
+two in a row, it is stopped (force-killed if it ignores the request) and restarted on the
+next poll. If it exits at startup, the app retries once with `--listen stdio://`.
 
 **Finding the CLIs.** Install locations are re-scanned every time a CLI is started, so
 an update that moves a binary is picked up without relaunching. The app checks, in
 order: a path you set (see below), the ChatGPT app (current and pre-26.1007 layouts,
-plus any copy Launch Services knows about), standalone and Homebrew installs, then the
-copies bundled with the VS Code, Cursor, and Windsurf extensions, newest first. A
+plus any copy Launch Services knows about), standalone and Homebrew installs, the CLI
+bundled with the Claude desktop app, then the copies bundled with the VS Code, Cursor,
+and Windsurf extensions, newest first. A
 binary is used only if its code signature matches the publisher (Anthropic or OpenAI),
 including one set by you.
 
@@ -188,7 +190,10 @@ scripts/rollback.sh --list   # list backups
 scripts/rollback.sh "$HOME/.ai-usage/backups/AI Usage Monitor <timestamp>.app"
 ```
 
-The version being replaced is saved as a backup too, so a rollback can be undone.
+Backups work like a stack: each rollback restores the newest backup saved by
+`install.sh` and removes it from the list, so running it again goes one install further
+back. The version being replaced is kept as `AI Usage Monitor replaced <timestamp>.app`;
+pass that path to `rollback.sh` to roll forward again.
 Usage history and settings are compatible both ways. To roll back the code instead,
 check out an earlier commit and run `scripts/install.sh`.
 

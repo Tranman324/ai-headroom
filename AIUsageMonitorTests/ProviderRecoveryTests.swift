@@ -65,6 +65,30 @@ final class ProviderRecoveryTests: XCTestCase {
         )
     }
 
+    func testClaudeCandidatesIncludeTheDesktopAppCLINewestVersionFirst() throws {
+        let home = makeTemporaryDirectory()
+        let desktopRoot = home.appendingPathComponent("Library/Application Support/Claude/claude-code", isDirectory: true)
+        for build in ["2.1.9/aaa", "2.1.295/bbb"] {
+            try FileManager.default.createDirectory(
+                at: desktopRoot.appendingPathComponent(build, isDirectory: true),
+                withIntermediateDirectories: true
+            )
+        }
+
+        let paths = ProviderExecutableDiscovery.claudeCandidatePaths(
+            overrides: FixedProviderRuntimeOverrides(),
+            homeDirectory: home.path
+        )
+
+        let newest = "\(desktopRoot.path)/2.1.295/bbb/claude.app/Contents/MacOS/claude"
+        let older = "\(desktopRoot.path)/2.1.9/aaa/claude.app/Contents/MacOS/claude"
+        XCTAssertLessThan(try XCTUnwrap(paths.firstIndex(of: newest)), try XCTUnwrap(paths.firstIndex(of: older)))
+        XCTAssertLessThan(
+            try XCTUnwrap(paths.firstIndex(of: "/opt/homebrew/bin/claude")),
+            try XCTUnwrap(paths.firstIndex(of: newest))
+        )
+    }
+
     func testUntrustedCandidateIsSkippedForTheNextTrustedOne() throws {
         let locator = ClaudeCLIRuntimeLocator(
             candidateExecutablePaths: ["/nonexistent/impostor/claude", "/nonexistent/trusted/claude"],

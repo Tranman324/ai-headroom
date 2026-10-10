@@ -1,33 +1,39 @@
 #!/bin/bash
 # Restores a previously installed AI Usage Monitor from ~/.ai-usage/backups.
-# The copy being replaced is kept as a backup too, so a rollback can itself be undone.
+#
+# Backups work like a stack: each rollback restores the newest backup saved by install.sh and
+# removes it from the list, so running rollback again goes one install further back. The build
+# being replaced is kept as "<name> replaced <time>.app", which you can restore explicitly to
+# roll forward again.
 set -euo pipefail
 
 APP_NAME="AI Usage Monitor"
-INSTALL_PATH="/Applications/${APP_NAME}.app"
-BACKUP_DIR="${HOME}/.ai-usage/backups"
+INSTALL_PATH="${AI_USAGE_MONITOR_INSTALL_PATH:-/Applications/${APP_NAME}.app}"
+BACKUP_DIR="${AI_USAGE_MONITOR_BACKUP_DIR:-${HOME}/.ai-usage/backups}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+source "${REPO_ROOT}/scripts/app-control.sh"
+
 usage() {
-    cat <<EOF
+    cat <<USAGE
 Usage: scripts/rollback.sh [--list | <backup.app>]
 
-  With no argument, restores the newest backup.
+  With no argument, restores the newest backup saved by install.sh.
   --list         Shows the available backups, newest first.
-  <backup.app>   Restores that specific backup.
-EOF
-}
-
-list_backups() {
-    find "${BACKUP_DIR}" -maxdepth 1 -name "${APP_NAME} *.app" -print0 2>/dev/null \
-        | xargs -0 ls -dt 2>/dev/null || true
+  <backup.app>   Restores that specific backup, for example a "replaced" one to roll forward.
+USAGE
 }
 
 target=""
 case "${1:-}" in
     -h|--help) usage; exit 0 ;;
-    --list) list_backups; exit 0 ;;
-    "") target="$(list_backups | head -n 1)" ;;
+    --list)
+        echo "Saved by install.sh (restored by default, newest first):"
+        install_backups | sed 's/^/  /'
+        echo "Replaced by a rollback (restore one explicitly to roll forward):"
+        replaced_backups | sed 's/^/  /'
+        exit 0 ;;
+    "") target="$(install_backups | head -n 1)" ;;
     *) target="$1" ;;
 esac
 
@@ -37,24 +43,27 @@ if [[ -z "${target}" || ! -x "${target}/Contents/MacOS/${APP_NAME}" ]]; then
     exit 1
 fi
 
-source "${REPO_ROOT}/scripts/app-control.sh"
-
 # Copy the chosen backup out first: the step below adds a new backup to the same folder.
 staging="$(mktemp -d)"
 trap 'rm -rf "${staging}"' EXIT
 ditto "${target}" "${staging}/${APP_NAME}.app"
 
 quit_app
+ensure_backup_dir
 
 if [[ -d "${INSTALL_PATH}" ]]; then
-    stamp="$(date +%Y%m%d-%H%M%S)"
-    echo "==> Keeping the current app as ${BACKUP_DIR}/${APP_NAME} ${stamp}.app"
-    mkdir -p "${BACKUP_DIR}"
-    chmod 700 "${BACKUP_DIR}"
-    ditto "${INSTALL_PATH}" "${BACKUP_DIR}/${APP_NAME} ${stamp}.app"
+    replaced_path="$(new_backup_path "replaced ")"
+    echo "==> Keeping the current app as ${replaced_path}"
+    ditto "${INSTALL_PATH}" "${replaced_path}"
 fi
 
 echo "==> Restoring ${target}"
 replace_installed_app "${staging}/${APP_NAME}.app"
-open "${INSTALL_PATH}"
+
+# The restored build is now the installed one, so it leaves the backup list.
+if [[ "$(cd "$(dirname "${target}")" && pwd)" == "$(cd "${BACKUP_DIR}" && pwd)" ]]; then
+    rm -rf "${target}"
+fi
+
+launch_app
 echo "Restored. Usage history and settings in ~/.ai-usage are shared by both versions and were not changed."

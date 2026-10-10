@@ -145,6 +145,7 @@ enum ProviderExecutableDiscovery {
             "/opt/homebrew/bin/claude",
             "/usr/local/bin/claude"
         ]
+        paths += claudeDesktopExecutables(homeDirectory: homeDirectory, fileManager: fileManager)
         paths += editorExtensionExecutables(
             prefix: "anthropic.claude-code-",
             relativePath: "resources/native-binary/claude",
@@ -196,6 +197,19 @@ enum ProviderExecutableDiscovery {
         chatGPTBundleIdentifiers.flatMap { identifier in
             NSWorkspace.shared.urlsForApplications(withBundleIdentifier: identifier)
         }
+    }
+
+    /// The Claude desktop app keeps its own signed CLI at `claude-code/<version>/<build>/claude.app`.
+    static func claudeDesktopExecutables(homeDirectory: String, fileManager: FileManager) -> [String] {
+        let root = "\(homeDirectory)/Library/Application Support/Claude/claude-code"
+        let versions = (try? fileManager.contentsOfDirectory(atPath: root)) ?? []
+        return versions
+            .sorted { $0.compare($1, options: .numeric) == .orderedDescending }
+            .flatMap { version -> [String] in
+                let versionPath = "\(root)/\(version)"
+                let builds = (try? fileManager.contentsOfDirectory(atPath: versionPath)) ?? []
+                return builds.sorted().map { "\(versionPath)/\($0)/claude.app/Contents/MacOS/claude" }
+            }
     }
 
     /// Returns bundled executables from VS Code-family extension folders, newest version first.

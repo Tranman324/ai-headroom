@@ -435,6 +435,14 @@ private final class ClaudeControlSession: @unchecked Sendable {
             }
         }
 
+        // A child that outlives the CLI could hold stdout open; end the session shortly after the
+        // CLI itself exits instead of waiting for the full timeout.
+        process.terminationHandler = { _ in
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) {
+                linesContinuation.finish()
+            }
+        }
+
         self.process = process
         self.input = inputPipe.fileHandleForWriting
         self.lines = lines
@@ -926,7 +934,9 @@ enum ClaudeStatusLineBridgeCommand {
             bridgeStatus = 1
         }
         if forwardsInput {
-            output.write(data)
+            // A previous status-line command that exits without reading its input closes the
+            // pipe; with SIGPIPE ignored (it can be inherited from the parent), that must not abort.
+            try? output.write(contentsOf: data)
         }
         return bridgeStatus
     }
@@ -1033,7 +1043,7 @@ struct ClaudeUsageProvider: UsageProviderFetching, ProviderAuthenticationManagin
 
     private func liveMeters(from limits: ClaudeUsageLimits, planName: String) throws -> [UsageMeterSnapshot] {
         var meters: [MeterKind: UsageMeterSnapshot] = [:]
-        func add(_ kind: MeterKind, _ window: ClaudeUsageLimitWindow?) throws {
+        func add(_ kind: MeterKind, _ window: ClaudeUsageLimitWindow?, isCoreLimit: Bool = false) throws {
             guard meters[kind] == nil,
                   let window,
                   let utilization = window.utilization,
@@ -1041,6 +1051,10 @@ struct ClaudeUsageProvider: UsageProviderFetching, ProviderAuthenticationManagin
                 return
             }
             guard utilization.isFinite, utilization >= 0 else {
+                // A bad per-model window is dropped so it cannot hide the session and weekly limits.
+                guard isCoreLimit else {
+                    return
+                }
                 throw ProviderClientFailure.malformedResponse(provider: provider)
             }
             guard resetAt > clock.now else {
@@ -1057,8 +1071,8 @@ struct ClaudeUsageProvider: UsageProviderFetching, ProviderAuthenticationManagin
             )
         }
 
-        try add(.claudeSession, limits.fiveHour)
-        try add(.claudeWeekAll, limits.sevenDay)
+        try add(.claudeSession, limits.fiveHour, isCoreLimit: true)
+        try add(.claudeWeekAll, limits.sevenDay, isCoreLimit: true)
         try add(.claudeWeekSonnet, limits.sevenDaySonnet)
         for model in limits.modelScoped {
             if let kind = Self.weeklyMeterKind(forModelNamed: model.displayName) {

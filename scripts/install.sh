@@ -4,9 +4,10 @@
 set -euo pipefail
 
 APP_NAME="AI Usage Monitor"
-INSTALL_PATH="/Applications/${APP_NAME}.app"
-BACKUP_DIR="${HOME}/.ai-usage/backups"
+INSTALL_PATH="${AI_USAGE_MONITOR_INSTALL_PATH:-/Applications/${APP_NAME}.app}"
+BACKUP_DIR="${AI_USAGE_MONITOR_BACKUP_DIR:-${HOME}/.ai-usage/backups}"
 KEEP_BACKUPS=5
+KEEP_REPLACED=3
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DERIVED_DATA="${REPO_ROOT}/build/DerivedData"
 BUILT_APP="${DERIVED_DATA}/Build/Products/Release/${APP_NAME}.app"
@@ -58,14 +59,11 @@ if ! "${BUILT_APP}/Contents/MacOS/${APP_NAME}" --diagnose; then
     echo "warning: installing anyway because of --force" >&2
 fi
 
-stamp="$(date +%Y%m%d-%H%M%S)"
-mkdir -p "${BACKUP_DIR}"
-chmod 700 "${BACKUP_DIR}"
-
+ensure_backup_dir
 quit_app
 
 if [[ -d "${INSTALL_PATH}" ]]; then
-    backup_path="${BACKUP_DIR}/${APP_NAME} ${stamp}.app"
+    backup_path="$(new_backup_path "")"
     echo "==> Backing up the installed app to ${backup_path}"
     ditto "${INSTALL_PATH}" "${backup_path}"
 fi
@@ -73,13 +71,11 @@ fi
 echo "==> Installing to ${INSTALL_PATH}"
 replace_installed_app "${BUILT_APP}"
 
-# Keep only the newest backups.
-find "${BACKUP_DIR}" -maxdepth 1 -name "${APP_NAME} *.app" -print0 \
-    | xargs -0 ls -dt 2>/dev/null \
-    | tail -n +$((KEEP_BACKUPS + 1)) \
-    | while IFS= read -r old_backup; do rm -rf "${old_backup}"; done
+# Keep only the newest backups of each kind.
+install_backups | tail -n +$((KEEP_BACKUPS + 1)) | while IFS= read -r old_backup; do rm -rf "${old_backup}"; done
+replaced_backups | tail -n +$((KEEP_REPLACED + 1)) | while IFS= read -r old_backup; do rm -rf "${old_backup}"; done
 
-open "${INSTALL_PATH}"
+launch_app
 
 echo "==> Checking the installed app"
 "${INSTALL_PATH}/Contents/MacOS/${APP_NAME}" --diagnose || true

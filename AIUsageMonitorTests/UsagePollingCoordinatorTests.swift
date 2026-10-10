@@ -96,6 +96,33 @@ final class UsagePollingCoordinatorTests: XCTestCase {
         await store.stopMonitoring()
     }
 
+    func testProviderReportedStaleDataKeepsItsMarkerAndReason() async throws {
+        let claude = try XCTUnwrap(UsageMonitorFixtures.normalSnapshot.provider(.claude))
+        let reason = ProviderClientFailure.usageUnavailable(provider: .claude).sanitizedError
+        let staleSince = UsageMonitorFixtures.baseDate.addingTimeInterval(-2 * 60 * 60)
+        let staleClaude = ProviderUsageSnapshot(
+            provider: .claude,
+            meters: claude.meters,
+            health: .stale(checkedAt: UsageMonitorFixtures.baseDate, staleSince: staleSince, error: reason)
+        )
+        let connectivity = PassiveConnectivityMonitor(initialState: .offline)
+        let store = makeStore(
+            providers: [RecordingProviderClient(provider: .claude, results: [.success(staleClaude)])],
+            connectivityMonitor: connectivity
+        )
+
+        await store.startMonitoring()
+        connectivity.set(.online)
+        await store.refresh()
+
+        let published = try XCTUnwrap(store.snapshot.provider(.claude))
+        XCTAssertEqual(published.health.kind, .stale)
+        XCTAssertEqual(published.health.staleSince, staleSince)
+        XCTAssertEqual(published.health.error, reason)
+        XCTAssertEqual(published.meters, claude.meters)
+        await store.stopMonitoring()
+    }
+
     func testStateUpdatesWhenProviderHistoryAppendFails() async throws {
         let history = RecordingHistoryStore(failingOperations: [.appendProviderSnapshot])
         let connectivity = PassiveConnectivityMonitor(initialState: .offline)

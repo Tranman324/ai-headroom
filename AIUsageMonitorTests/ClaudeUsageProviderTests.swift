@@ -933,6 +933,116 @@ final class ClaudeUsageProviderTests: XCTestCase {
         XCTAssertFalse(stillRunning, "A cancelled poll must not leave the CLI running")
     }
 
+    func testMalformedPerModelWindowDoesNotHideTheCoreLimits() async throws {
+        let provider = ClaudeUsageProvider(
+            cli: StubClaudeCLI(statuses: [loggedInStatus], usage: .success(ClaudeUsageLimits(
+                fiveHour: window(30, resetsIn: 60 * 60),
+                sevenDay: window(60, resetsIn: 24 * 60 * 60),
+                sevenDaySonnet: window(-5, resetsIn: 24 * 60 * 60),
+                modelScoped: [ClaudeModelUsageLimit(displayName: "Fable", window: window(-1, resetsIn: 24 * 60 * 60))]
+            ))),
+            usageCache: StubClaudeUsageCache(cache: nil),
+            statusLineInstaller: StubClaudeStatusLineInstaller(installed: false),
+            overrides: automaticSource,
+            clock: FixedClock(now: checkedAt)
+        )
+
+        let snapshot = try await provider.fetchUsageSnapshot()
+
+        XCTAssertEqual(snapshot.meters.map(\.kind), [.claudeSession, .claudeWeekAll])
+    }
+
+    func testCLIClientLetsTheCLIExitOnItsOwnAfterAnswering() async throws {
+        let markerURL = temporaryDirectory().appendingPathExtension("exited")
+        let script = """
+        while IFS= read -r line; do
+          case "$line" in
+            *get_usage*) printf '%s\\n' '{"type":"control_response","response":{"subtype":"success","request_id":"\(ClaudeCLIClient.usageRequestID)","response":{"rate_limits":{}}}}' ;;
+            *initialize*) printf '%s\\n' '{"type":"control_response","response":{"subtype":"success","request_id":"\(ClaudeCLIClient.initializeRequestID)","response":{}}}' ;;
+          esac
+        done
+        sleep 0.3
+        : > "\(markerURL.path)"
+        """
+        let client = ClaudeCLIClient(
+            runtimeLocator: FixedClaudeRuntimeLocator(value: ClaudeCLIRuntime(
+                executableURL: URL(fileURLWithPath: "/bin/sh"),
+                argumentPrefix: ["-c", script, "claude-test"]
+            )),
+            usageTimeout: .seconds(10),
+            usageExitGracePeriod: .seconds(3)
+        )
+
+        _ = try await client.readUsageLimits()
+
+        var exitedCleanly = false
+        for _ in 0 ..< 100 where !exitedCleanly {
+            exitedCleanly = FileManager.default.fileExists(atPath: markerURL.path)
+            if !exitedCleanly {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+        }
+        XCTAssertTrue(exitedCleanly, "The CLI must be allowed to finish its own writes after answering")
+    }
+
+    func testCLIClientForceKillsACLIThatIgnoresTermination() async throws {
+        let pidURL = temporaryDirectory().appendingPathExtension("pid")
+        let script = """
+        trap '' TERM
+        echo $$ > "\(pidURL.path)"
+        while :; do sleep 0.1; done
+        """
+        let client = scriptedClient(script, timeout: .milliseconds(300))
+
+        await assertUsageReadFails(client, with: .usageRequestTimedOut)
+
+        let pidText = try String(contentsOf: pidURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        let processID = try XCTUnwrap(pid_t(pidText))
+        var stillRunning = true
+        for _ in 0 ..< 300 where stillRunning {
+            stillRunning = kill(processID, 0) == 0
+            if stillRunning {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+        }
+        XCTAssertFalse(stillRunning, "A CLI that ignores SIGTERM must still be stopped")
+    }
+
+    func testCLIClientReportsAnExitPromptlyEvenIfAChildKeepsOutputOpen() async {
+        let client = scriptedClient("( sleep 5 ) & exit 2", timeout: .seconds(20))
+        let started = ContinuousClock.now
+
+        await assertUsageReadFails(client, with: .usageRequestFailed)
+
+        XCTAssertLessThan(ContinuousClock.now - started, .seconds(5))
+    }
+
+    func testStatusLineBridgeSurvivesAPreviousCommandThatDoesNotReadItsInput() throws {
+        let root = temporaryDirectory().appendingPathComponent("state", isDirectory: true)
+        let inputPipe = Pipe()
+        let outputPipe = Pipe()
+        inputPipe.fileHandleForWriting.write(Data(
+            #"{"rate_limits":{"five_hour":{"used_percentage":9,"resets_at":1783782000}}}"#.utf8
+        ))
+        inputPipe.fileHandleForWriting.closeFile()
+        // The forwarded-to command already exited, and SIGPIPE may be ignored by inheritance.
+        try outputPipe.fileHandleForReading.close()
+        let previousHandler = signal(SIGPIPE, SIG_IGN)
+        defer { signal(SIGPIPE, previousHandler) }
+
+        let status = ClaudeStatusLineBridgeCommand.run(
+            input: inputPipe.fileHandleForReading,
+            output: outputPipe.fileHandleForWriting,
+            forwardsInput: true,
+            rootProvider: FixedStorageRootProvider(storageRoot: root)
+        )
+
+        XCTAssertEqual(status, 0)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: root.appendingPathComponent(ClaudeUsageCacheStore.cacheFileName).path
+        ))
+    }
+
     func testModelNamesMapToWeeklyMeterKinds() {
         XCTAssertEqual(ClaudeUsageProvider.weeklyMeterKind(forModelNamed: "Fable"), .claudeWeekFable)
         XCTAssertEqual(ClaudeUsageProvider.weeklyMeterKind(forModelNamed: "Claude Sonnet"), .claudeWeekSonnet)

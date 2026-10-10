@@ -371,45 +371,139 @@ final class CodexUsageProviderTests: XCTestCase {
 
         XCTAssertEqual(runtime.executableURL.path, relocated)
         XCTAssertEqual(runtime.arguments, ["app-server", "--stdio"])
-        XCTAssertEqual(runtime.alternateArguments, ["app-server"])
+        XCTAssertEqual(runtime.alternateArguments, ["app-server", "--listen", "stdio://"])
     }
 
-    func testAppServerClientRelaunchesAHungServerAfterATimeout() async throws {
+    func testAppServerClientRelaunchesAServerThatStaysSilent() async throws {
         let counterURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let script = """
         launches=$(cat "\(counterURL.path)" 2>/dev/null || echo 0)
         launches=$((launches + 1))
         echo "$launches" > "\(counterURL.path)"
         while IFS= read -r line; do
+          id=$(printf '%s' "$line" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p')
           case "$line" in
             *account*read*)
-              id=$(printf '%s' "$line" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p')
               if [ "$launches" -gt 1 ]; then
                 printf '{"id":%s,"result":{"account":{"type":"chatgpt","planType":"plus"}}}\\n' "$id"
               fi ;;
-            *initialize*)
-              id=$(printf '%s' "$line" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p')
-              printf '{"id":%s,"result":{}}\\n' "$id" ;;
+            *initialize*) printf '{"id":%s,"result":{}}\\n' "$id" ;;
           esac
         done
         """
         let client = CodexAppServerClient(
             executableURL: URL(fileURLWithPath: "/bin/sh"),
             executableArguments: ["-c", script],
-            requestTimeout: .milliseconds(500)
+            requestTimeout: .milliseconds(400)
         )
 
-        do {
-            _ = try await client.readAccount()
-            XCTFail("Expected the first, hung app-server to time out")
-        } catch {
-            XCTAssertEqual(error as? CodexAppServerFailure, .requestFailed)
+        // One timeout is tolerated; the second consecutive one replaces the server.
+        for attempt in 1 ... CodexAppServerClient.timeoutsBeforeRestart {
+            do {
+                _ = try await client.readAccount()
+                XCTFail("Expected attempt \(attempt) against the silent app-server to time out")
+            } catch {
+                XCTAssertEqual(error as? CodexAppServerFailure, .requestFailed)
+            }
         }
         let account = try await client.readAccount()
         await client.shutdown()
 
         XCTAssertEqual(account, CodexAppServerAccount(type: "chatgpt", planType: "plus"))
         XCTAssertEqual(try String(contentsOf: counterURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), "2")
+    }
+
+    func testOneTimedOutRequestDoesNotFailOtherRequestsOrRestartTheServer() async throws {
+        let counterURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let script = """
+        launches=$(cat "\(counterURL.path)" 2>/dev/null || echo 0)
+        echo $((launches + 1)) > "\(counterURL.path)"
+        while IFS= read -r line; do
+          id=$(printf '%s' "$line" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p')
+          case "$line" in
+            *login*start*) ;;
+            *account*read*) sleep 0.5; printf '{"id":%s,"result":{"account":{"type":"chatgpt","planType":"pro"}}}\\n' "$id" ;;
+            *initialize*) printf '{"id":%s,"result":{}}\\n' "$id" ;;
+          esac
+        done
+        """
+        let client = CodexAppServerClient(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            executableArguments: ["-c", script],
+            requestTimeout: .seconds(1)
+        )
+
+        // The sign-in request times out at about 1.0 s while the account read is still being answered.
+        let login = Task { try await client.startChatGPTAuthentication() }
+        try await Task.sleep(for: .milliseconds(700))
+        let account = try await client.readAccount()
+        let loginResult = await login.result
+        await client.shutdown()
+
+        XCTAssertEqual(account?.planType, "pro")
+        XCTAssertThrowsError(try loginResult.get())
+        XCTAssertEqual(try String(contentsOf: counterURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), "1")
+    }
+
+    func testRestartForceKillsAnAppServerThatIgnoresTermination() async throws {
+        let pidsURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let script = """
+        trap '' TERM
+        echo $$ >> "\(pidsURL.path)"
+        while IFS= read -r line; do
+          id=$(printf '%s' "$line" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p')
+          case "$line" in
+            *initialize*) printf '{"id":%s,"result":{}}\\n' "$id" ;;
+          esac
+        done
+        while :; do sleep 0.1; done
+        """
+        let client = CodexAppServerClient(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            executableArguments: ["-c", script],
+            requestTimeout: .milliseconds(300)
+        )
+
+        for _ in 1 ... CodexAppServerClient.timeoutsBeforeRestart {
+            _ = try? await client.readAccount()
+        }
+        let firstText = try String(contentsOf: pidsURL, encoding: .utf8)
+        let firstProcessID = try XCTUnwrap(firstText.split(separator: "\n").first.flatMap { pid_t(String($0)) })
+
+        var stillRunning = true
+        for _ in 0 ..< 300 where stillRunning {
+            stillRunning = kill(firstProcessID, 0) == 0
+            if stillRunning {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+        }
+        await client.shutdown()
+        XCTAssertFalse(stillRunning, "A hung app-server that ignores SIGTERM must not be leaked")
+    }
+
+    func testConcurrentCallersWaitForTheSameStartupIncludingItsRetry() async throws {
+        let script = """
+        case " $* " in *" --stdio "*) sleep 0.2; exit 2 ;; esac
+        while IFS= read -r line; do
+          id=$(printf '%s' "$line" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p')
+          case "$line" in
+            *account*read*) printf '{"id":%s,"result":{"account":{"type":"chatgpt","planType":"plus"}}}\\n' "$id" ;;
+            *initialize*) printf '{"id":%s,"result":{}}\\n' "$id" ;;
+          esac
+        done
+        """
+        let client = CodexAppServerClient(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            executableArguments: ["-c", script, "codex-test", "app-server", "--stdio"],
+            alternateExecutableArguments: ["-c", script, "codex-test", "app-server", "--listen", "stdio://"]
+        )
+
+        async let first = client.readAccount()
+        async let second = client.readAccount()
+        let accounts = try await [first, second]
+        await client.shutdown()
+
+        XCTAssertEqual(accounts.map { $0?.planType }, ["plus", "plus"])
     }
 
     func testAppServerClientRetriesWithoutStdioFlagWhenStartupExits() async throws {

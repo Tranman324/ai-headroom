@@ -22,7 +22,9 @@ protocol CodexAppServerRuntimeLocating: Sendable {
 
 struct CodexAppServerRuntimeLocator: CodexAppServerRuntimeLocating {
     static let arguments = ["app-server", "--stdio"]
-    static let alternateArguments = ["app-server"]
+    /// Spelled out rather than relying on the default transport, so a changed default can never
+    /// start a network listener.
+    static let alternateArguments = ["app-server", "--listen", "stdio://"]
 
     private let candidateExecutablePaths: @Sendable () -> [String]
     private let isExecutable: @Sendable (String) -> Bool
@@ -101,9 +103,13 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
     private var standardOutput: FileHandle?
     private var standardError: FileHandle?
     private var outputReadTask: Task<Void, Never>?
-    private var errorReadTask: Task<Void, Never>?
+    private var outputChunks: AsyncStream<Data>.Continuation?
     private var outputBuffer = Data()
+    private var startupTask: Task<Void, Error>?
+    private var consecutiveTimeouts = 0
     private var nextRequestID = 1
+    /// One slow answer is tolerated; repeated silence means the app-server is hung.
+    static let timeoutsBeforeRestart = 2
     private var pendingResponses: [Int: CheckedContinuation<[String: Any], Error>] = [:]
     private var requestTimeoutTasks: [Int: Task<Void, Never>] = [:]
 
@@ -185,9 +191,22 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
     }
 
     private func ensureStarted() async throws {
+        // Concurrent callers share one startup so none of them talks to a half-initialized
+        // app-server or has its process replaced by another caller's retry.
+        if let startupTask {
+            try await startupTask.value
+            return
+        }
         guard process == nil else {
             return
         }
+        let task = Task { try await self.startAndInitialize() }
+        startupTask = task
+        defer { startupTask = nil }
+        try await task.value
+    }
+
+    private func startAndInitialize() async throws {
         // Resolved on every launch so a CLI moved by an app update is found without a restart.
         guard let runtime = runtimeLocator?.runtime() ?? explicitRuntime else {
             throw CodexAppServerFailure.executableNotFound
@@ -257,26 +276,34 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
             throw error
         }
 
+        // Pipes are read on Foundation's handler queue so a hung app-server never pins a thread
+        // of the shared concurrency pool; a single consumer keeps the chunks in order.
+        var continuation: AsyncStream<Data>.Continuation?
+        let chunks = AsyncStream<Data> { continuation = $0 }
+        let chunkContinuation = continuation
+        outputChunks = chunkContinuation
         let outputHandle = output.fileHandleForReading
         standardOutput = outputHandle
-        // Blocking reads stay off the actor; closing the handle unblocks cancellation.
-        outputReadTask = Task.detached(priority: .utility) { [weak self, outputHandle] in
-            while !Task.isCancelled {
-                let data = outputHandle.availableData
-                guard !data.isEmpty else {
-                    return
-                }
-                await self?.receive(data: data)
+        outputHandle.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                chunkContinuation?.finish()
+                return
+            }
+            chunkContinuation?.yield(data)
+        }
+        outputReadTask = Task { [weak self] in
+            for await chunk in chunks {
+                await self?.receive(data: chunk)
             }
         }
 
         let errorHandle = standardError.fileHandleForReading
         self.standardError = errorHandle
-        errorReadTask = Task.detached(priority: .utility) { [errorHandle] in
-            while !Task.isCancelled {
-                guard !errorHandle.availableData.isEmpty else {
-                    return
-                }
+        errorHandle.readabilityHandler = { handle in
+            if handle.availableData.isEmpty {
+                handle.readabilityHandler = nil
             }
         }
     }
@@ -361,8 +388,12 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
 
     private func receive(line: Data) {
         guard let message = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-              let identifier = requestIdentifier(in: message),
-              let continuation = pendingResponses.removeValue(forKey: identifier) else {
+              let identifier = requestIdentifier(in: message) else {
+            return
+        }
+        // Any answer, even a late one, shows the app-server is alive.
+        consecutiveTimeouts = 0
+        guard let continuation = pendingResponses.removeValue(forKey: identifier) else {
             return
         }
         requestTimeoutTasks.removeValue(forKey: identifier)?.cancel()
@@ -411,14 +442,24 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
         processToken = nil
         if let runningProcess, runningProcess.isRunning {
             runningProcess.terminate()
+            let processIdentifier = runningProcess.processIdentifier
+            // An app-server that ignores SIGTERM must not pile up across restarts.
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3) {
+                if runningProcess.isRunning {
+                    kill(processIdentifier, SIGKILL)
+                }
+            }
         }
-        standardInput?.closeFile()
+        consecutiveTimeouts = 0
+        try? standardInput?.close()
         standardInput = nil
+        standardOutput?.readabilityHandler = nil
+        standardOutput = nil
+        outputChunks?.finish()
+        outputChunks = nil
         outputReadTask?.cancel()
         outputReadTask = nil
-        standardOutput = nil
-        errorReadTask?.cancel()
-        errorReadTask = nil
+        standardError?.readabilityHandler = nil
         standardError = nil
         inputPipe = nil
         outputPipe = nil
@@ -441,6 +482,12 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
 
     private func requestDidTimeOut(_ identifier: Int) {
         guard pendingResponses[identifier] != nil else {
+            return
+        }
+        consecutiveTimeouts += 1
+        guard consecutiveTimeouts >= Self.timeoutsBeforeRestart else {
+            // Fail only this request: the shared app-server may be holding a sign-in or answering others.
+            failPendingRequest(identifier, with: CodexAppServerFailure.requestFailed)
             return
         }
         // A hung app-server would fail every later poll; dropping it makes the next request relaunch.
