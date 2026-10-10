@@ -37,7 +37,7 @@ final class ProviderCardPresentationTests: XCTestCase {
 
         XCTAssertEqual(card.estimate?.tone, .hit)
         XCTAssertEqual(card.estimate?.text, "Hits 100% ~6:20 PM, before reset")
-        XCTAssertEqual(card.estimate?.basis, "last 3h")
+        XCTAssertEqual(card.estimate?.basis, "last 2h")
     }
 
     func testEstimateForAWeekAwayResetUsesDailyPaceAndNamesTheDay() {
@@ -55,7 +55,7 @@ final class ProviderCardPresentationTests: XCTestCase {
         XCTAssertEqual(card(.claude, scenario: .safe).estimate?.tone, .safe)
         XCTAssertEqual(card(.claude, scenario: .safe).estimate?.text, "Reaches ~43% by reset")
         XCTAssertEqual(card(.claude, scenario: .idle).estimate, UsageEstimatePresentation(tone: .idle, text: "No usage in the last 3 hours", basis: ""))
-        XCTAssertEqual(card(.codex, scenario: .idle).estimate, UsageEstimatePresentation(tone: .noData, text: "Estimate available after a few readings", basis: ""))
+        XCTAssertEqual(card(.codex, scenario: .idle).estimate, UsageEstimatePresentation(tone: .noData, text: "Estimate available after a few hours of readings", basis: ""))
     }
 
     func testEstimateIgnoresReadingsFromThePreviousWindow() {
@@ -69,7 +69,7 @@ final class ProviderCardPresentationTests: XCTestCase {
 
         let estimate = ProviderCardPresenter.card(provider: .claude, snapshot: snapshot, history: history, connection: nil, alertThreshold: 80, timeZone: newYork).estimate
 
-        XCTAssertEqual(estimate, UsageEstimatePresentation(tone: .safe, text: "Reaches ~48% by reset", basis: "last 1h"))
+        XCTAssertEqual(estimate, UsageEstimatePresentation(tone: .safe, text: "Reaches ~48% by reset", basis: "last 45m"))
     }
 
     func testShortHorizonUsesOnlyTheLastThreeHours() {
@@ -145,6 +145,112 @@ final class ProviderCardPresentationTests: XCTestCase {
 
         XCTAssertNotEqual(estimate?.tone, .idle)
         XCTAssertNotEqual(estimate?.tone, .noData)
+    }
+
+    func testABurstAfterAQuietStretchWarnsWhenTheResetIsNear() {
+        // Flat at 82% for three hours, then 82 → 85% in the last 20 minutes; resets in 5 hours.
+        let reset = now.addingTimeInterval(5 * 3600)
+        func estimate(climbTo peak: Double, over minutes: Double) -> UsageEstimatePresentation? {
+            var history = Scenario.history(.claudeWeekAll, current: 82, perHour: 0, span: 3, now: now.addingTimeInterval(-minutes * 60), reset: reset, stepMinutes: 3)
+            history += Scenario.history(.claudeWeekAll, current: peak, perHour: (peak - 82) / (minutes / 60), span: minutes / 60, now: now, reset: reset, stepMinutes: 3)
+            let snapshot = Scenario.snapshot(now: now, claude: [(.claudeWeekAll, peak, reset)], codex: [])
+            return ProviderCardPresenter.card(provider: .claude, snapshot: snapshot, history: Scenario.mergedByPoll(history), connection: nil, alertThreshold: 80, timeZone: newYork).estimate
+        }
+
+        // The basis names the readings actually used: the oldest one inside the 30-minute window.
+        XCTAssertEqual(estimate(climbTo: 85, over: 20), UsageEstimatePresentation(tone: .hit, text: "Hits 100% ~6:10 PM, before reset", basis: "last 25m"))
+        XCTAssertEqual(estimate(climbTo: 90, over: 30), UsageEstimatePresentation(tone: .hit, text: "Hits 100% ~4:20 PM, before reset", basis: "last 30m"))
+    }
+
+    func testALateBurstStillCountsOverADayLongWindow() {
+        // Idle for 23 hours, then +6 points in the last hour; resets in 4 days.
+        let reset = now.addingTimeInterval(4 * 86_400)
+        var history = Scenario.history(.codexWeek, current: 40, perHour: 0, span: 23, now: now.addingTimeInterval(-3600), reset: reset, stepMinutes: 3)
+        history += Scenario.history(.codexWeek, current: 46, perHour: 6, span: 1, now: now, reset: reset, stepMinutes: 3)
+        let snapshot = Scenario.snapshot(now: now, claude: [], codex: [(.codexWeek, 46, reset)])
+
+        let estimate = ProviderCardPresenter.card(provider: .codex, snapshot: snapshot, history: Scenario.mergedByPoll(history), connection: nil, alertThreshold: 80, timeZone: newYork).estimate
+
+        XCTAssertEqual(estimate, UsageEstimatePresentation(tone: .safe, text: "Reaches ~70% by reset", basis: "last 24h"))
+    }
+
+    func testTheDailyPaceDoesNotDependOnTheTimeOfDay() throws {
+        // The same routine every day: 2 points an hour from 9 AM to 6 PM, nothing overnight.
+        let dayStart = Date(timeIntervalSince1970: 1_791_590_400) // Fri Oct 9 midnight
+        var readings: [MeterHistorySample] = []
+        var level = 10.0
+        for minute in stride(from: 0, through: 3 * 24 * 60, by: 3) {
+            let time = dayStart.addingTimeInterval(Double(minute) * 60)
+            let hour = (minute / 60) % 24
+            if (9..<18).contains(hour) {
+                level += 2.0 / 20
+            }
+            readings.append(MeterHistorySample(kind: .codexWeek, capturedAt: time, utilization: try UtilizationPercentage(level), resetAt: dayStart.addingTimeInterval(7 * 86_400)))
+        }
+        func pace(at time: Date) -> Double? {
+            let window = readings.filter { $0.capturedAt > time.addingTimeInterval(-86_400) && $0.capturedAt <= time }
+            guard case let .rising(rate, _) = ProviderCardPresenter.pace(samples: window, current: window.last!.utilization.value, now: time, isShortHorizon: false) else {
+                return nil
+            }
+            return rate * 3600
+        }
+
+        let afternoon = try XCTUnwrap(pace(at: dayStart.addingTimeInterval(86_400 + 14 * 3600)))
+        let midnight = try XCTUnwrap(pace(at: dayStart.addingTimeInterval(2 * 86_400)))
+        XCTAssertEqual(afternoon, 0.75, accuracy: 0.02, "18 points a day is 0.75 points an hour")
+        XCTAssertEqual(midnight, 0.75, accuracy: 0.02)
+    }
+
+    func testDriftUnderOnePointIsIdleAndAPassedResetHasNoEstimate() {
+        let reset = now.addingTimeInterval(4 * 3600)
+        let drift = Scenario.history(.claudeWeekAll, current: 50.6, perHour: 0.2, span: 3, now: now, reset: reset)
+        let driftCard = ProviderCardPresenter.card(
+            provider: .claude,
+            snapshot: Scenario.snapshot(now: now, claude: [(.claudeWeekAll, 50.6, reset)], codex: []),
+            history: drift,
+            connection: nil,
+            alertThreshold: 80,
+            timeZone: newYork
+        )
+        XCTAssertEqual(driftCard.estimate?.tone, .idle)
+
+        // Rising readings for a window whose reset time has already passed must not be projected.
+        let pastReset = now.addingTimeInterval(-60)
+        let passed = UsageMeterSnapshot(kind: .claudeWeekAll, utilization: try! UtilizationPercentage(50), resetAt: pastReset)
+        let rising = Scenario.history(.claudeWeekAll, current: 50, perHour: 5, span: 2, now: now, reset: pastReset)
+        XCTAssertEqual(
+            ProviderCardPresenter.estimate(for: passed, current: Scenario.snapshot(now: now, claude: [(.claudeWeekAll, 50, pastReset)], codex: []), history: rising, timeZone: newYork).tone,
+            .noData
+        )
+    }
+
+    func testAnImminentLimitSaysWithinMinutesRatherThanAPastTime() {
+        XCTAssertEqual(ProviderCardPresenter.approximateTimeText(now.addingTimeInterval(4 * 60), now: now, timeZone: newYork), "within minutes")
+    }
+
+    func testEarlyMorningResetsAreTonightOnlyWhileThatNightIsAhead() {
+        let oneThirtyAM = Date(timeIntervalSince1970: 1_791_610_200) // Sat Oct 10, 1:30 AM
+        func lead(_ interval: TimeInterval) -> String {
+            ProviderCardPresenter.resetLead(for: oneThirtyAM.addingTimeInterval(interval), now: oneThirtyAM, timeZone: newYork).lead
+        }
+
+        XCTAssertEqual(lead(30 * 60), "tonight 2:00 AM")
+        XCTAssertEqual(lead(24.5 * 3600), "tomorrow 2:00 AM")
+    }
+
+    func testBackFromConnectionsReturnsToTheListWhenOpenedFromIt() async throws {
+        let store = await UsageMonitorStore(dependencies: AppCompositionRoot.fixture())
+
+        try await store.handle(.showProviderConnections)
+        try await store.handle(.closeProviderConnections)
+        let fromList = await store.navigation
+        try await store.handle(.openSettings)
+        try await store.handle(.openProviderConnections)
+        try await store.handle(.closeProviderConnections)
+        let fromSettings = await store.navigation
+
+        XCTAssertFalse(fromList.isSettingsPresented, "Back returns to the usage list it came from")
+        XCTAssertTrue(fromSettings.isSettingsPresented, "Back from Settings → Connections still returns to Settings")
     }
 
     func testEstimateTimesRoundDownAndNameTheDateWhenAWeekAway() {
@@ -858,8 +964,8 @@ enum Scenario: String, CaseIterable {
     }
 
     /// Readings every 15 minutes rising at `perHour` points to reach `current` at `now`.
-    static func history(_ kind: MeterKind, current: Double, perHour: Double, span hours: Double, now: Date, reset: Date) -> [CombinedUsageSnapshot] {
-        let steps = max(1, Int((hours * 4).rounded()))
+    static func history(_ kind: MeterKind, current: Double, perHour: Double, span hours: Double, now: Date, reset: Date, stepMinutes: Double = 15) -> [CombinedUsageSnapshot] {
+        let steps = max(1, Int((hours * 60 / stepMinutes).rounded()))
         return (1 ... steps).map { step in
             let hoursAgo = Double(step) * hours / Double(steps)
             let capturedAt = now.addingTimeInterval(-hoursAgo * 3600)

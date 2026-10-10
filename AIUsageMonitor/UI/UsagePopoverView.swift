@@ -564,7 +564,8 @@ private struct CardMeterBar: View {
 }
 
 private struct ResetCreditsRow: View {
-    static let maximumListedCredits = 6
+    /// Keeps the open list inside the popover even when the other account is collapsed.
+    static let maximumListedCredits = 4
     static let rowHeight: CGFloat = 24
 
     var credits: ResetCreditsPresentation
@@ -617,6 +618,13 @@ private struct ResetCreditsRow: View {
                     .offset(y: -(Self.rowHeight + 3 - 2))
             }
         }
+        .onDisappear {
+            closeTask?.cancel()
+            isHoveringRow = false
+            isHoveringList = false
+            isListOpen = false
+            hoveredCredit = nil
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
         .accessibilityIdentifier("codex-reset-credits")
@@ -660,7 +668,8 @@ private struct ResetCreditsRow: View {
                         Text(credit.detail)
                             .font(.system(size: 10))
                             .foregroundStyle(dateColor(credit).swiftUIColor)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                             .accessibilityIdentifier("codex-reset-credit-detail")
                     }
                 }

@@ -312,11 +312,13 @@ enum ProviderCardPresenter {
         let calendar = gregorian(timeZone)
         let time = timeText(date, timeZone: timeZone)
         let hour = calendar.component(.hour, from: date)
+        // The small hours belong to tonight only while that night is still ahead.
+        let isComingSmallHours = hour < 3 && date.timeIntervalSince(now) <= 12 * 60 * 60
         if calendar.isDate(date, inSameDayAs: now) {
-            return hour >= 17 ? "tonight \(time)" : "today \(time)"
+            return hour >= 17 || isComingSmallHours ? "tonight \(time)" : "today \(time)"
         }
         if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now), calendar.isDate(date, inSameDayAs: tomorrow) {
-            return hour < 3 ? "tonight \(time)" : "tomorrow \(time)"
+            return isComingSmallHours ? "tonight \(time)" : "tomorrow \(time)"
         }
         if date.timeIntervalSince(now) < 6 * 24 * 60 * 60 {
             return format(date, "EEE h:mm a", timeZone: timeZone)
@@ -350,10 +352,11 @@ enum ProviderCardPresenter {
 
     // MARK: - Pace estimate
 
-    /// Projects the meter at its recent pace, from readings in the current reset window only:
-    /// the last 3 hours when the limit resets within a day, otherwise the last 24 hours. The pace
-    /// is a least-squares trend so one dip or one 1% tick does not decide it, the basis names the
-    /// span actually observed, and too little data says so rather than extrapolating.
+    /// Projects the meter at its pace, from readings in the current reset window only. Limits
+    /// resetting within a day use the faster of the last-3-hours average and the last 30 minutes,
+    /// so a burst after a quiet stretch still warns; longer horizons use the plain last-24-hours
+    /// average, which does not drift with the time of day. The basis names the span the pace came
+    /// from, and too little data says so rather than extrapolating.
     static func estimate(
         for meter: UsageMeterSnapshot,
         current: CombinedUsageSnapshot,
@@ -366,66 +369,84 @@ enum ProviderCardPresenter {
             return UsageEstimatePresentation(tone: .hit, text: "At 100% until reset", basis: "")
         }
         let untilReset = meter.resetAt.timeIntervalSince(now)
-        let notEnoughData = UsageEstimatePresentation(tone: .noData, text: "Estimate available after a few readings", basis: "")
+        let isShortHorizon = untilReset <= shortHorizon
+        let notEnoughData = UsageEstimatePresentation(
+            tone: .noData,
+            text: isShortHorizon ? "Estimate available after a few readings" : "Estimate available after a few hours of readings",
+            basis: ""
+        )
         guard untilReset > 0 else {
             return notEnoughData
         }
 
-        let isShortHorizon = untilReset <= shortHorizon
-        let window = isShortHorizon ? shortPaceWindow : longPaceWindow
-        let minimumSpan = isShortHorizon ? minimumShortPaceSpan : minimumLongPaceSpan
         let samples = UsageAnalytics.samples(
             for: meter.kind,
             in: UsagePresentation.mergedSnapshots(history, current: current)
         )
         .filter {
             UsageAnalytics.isSameResetWindow($0.resetAt, meter.resetAt)
-                && $0.capturedAt >= now.addingTimeInterval(-window)
+                && $0.capturedAt >= now.addingTimeInterval(-(isShortHorizon ? shortPaceWindow : longPaceWindow))
                 && $0.capturedAt <= now
         }
-        guard let first = samples.first, let last = samples.last else {
+        switch pace(samples: samples, current: value, now: now, isShortHorizon: isShortHorizon) {
+        case .notEnoughData:
             return notEnoughData
-        }
-        let span = last.capturedAt.timeIntervalSince(first.capturedAt)
-        guard span >= minimumSpan, let pointsPerSecond = trendSlope(samples) else {
-            return notEnoughData
-        }
-
-        guard pointsPerSecond > 0, pointsPerSecond * span >= 1 else {
+        case let .idle(span):
             return UsageEstimatePresentation(tone: .idle, text: "No usage in the last \(durationText(span, style: .long))", basis: "")
-        }
-
-        let basis = "last \(durationText(span, style: .short))"
-        let limitAt = now.addingTimeInterval((100 - value) / pointsPerSecond)
-        if limitAt < meter.resetAt {
+        case let .rising(pointsPerSecond, span):
+            let basis = "last \(durationText(span, style: .short))"
+            let limitAt = now.addingTimeInterval((100 - value) / pointsPerSecond)
+            if limitAt < meter.resetAt {
+                return UsageEstimatePresentation(
+                    tone: .hit,
+                    text: "Hits 100% \(approximateTimeText(limitAt, now: now, timeZone: timeZone)), before reset",
+                    basis: basis
+                )
+            }
+            let atReset = min(99, value + pointsPerSecond * untilReset)
             return UsageEstimatePresentation(
-                tone: .hit,
-                text: "Hits 100% \(approximateTimeText(limitAt, now: now, timeZone: timeZone)), before reset",
+                tone: atReset >= 90 ? .close : .safe,
+                text: "Reaches ~\(Int(atReset.rounded()))% by reset",
                 basis: basis
             )
         }
-
-        let atReset = min(99, value + pointsPerSecond * untilReset)
-        return UsageEstimatePresentation(
-            tone: atReset >= 90 ? .close : .safe,
-            text: "Reaches ~\(Int(atReset.rounded()))% by reset",
-            basis: basis
-        )
     }
 
-    /// Least-squares slope in points per second; nil when every reading shares one timestamp.
-    static func trendSlope(_ samples: [MeterHistorySample]) -> Double? {
-        guard let origin = samples.first?.capturedAt, samples.count >= 2 else {
-            return nil
+    enum Pace: Equatable {
+        case notEnoughData
+        case idle(span: TimeInterval)
+        case rising(pointsPerSecond: Double, span: TimeInterval)
+    }
+
+    static let recentPaceWindow: TimeInterval = 30 * 60
+    static let minimumRecentPaceSpan: TimeInterval = 15 * 60
+
+    /// Net change from a robust starting point (the median of the window's first three readings,
+    /// so one glitch cannot decide it) to the current reading.
+    static func pace(samples: [MeterHistorySample], current: Double, now: Date, isShortHorizon: Bool) -> Pace {
+        guard let first = samples.first,
+              now.timeIntervalSince(first.capturedAt) >= (isShortHorizon ? minimumShortPaceSpan : minimumLongPaceSpan) else {
+            return .notEnoughData
         }
-        let points = samples.map { ($0.capturedAt.timeIntervalSince(origin), $0.utilization.value) }
-        let meanX = points.map(\.0).reduce(0, +) / Double(points.count)
-        let meanY = points.map(\.1).reduce(0, +) / Double(points.count)
-        let spread = points.reduce(0) { $0 + ($1.0 - meanX) * ($1.0 - meanX) }
-        guard spread > 0 else {
-            return nil
+        let opening = samples.prefix(3).sorted { $0.utilization.value < $1.utilization.value }
+        let start = opening[opening.count / 2]
+        let span = now.timeIntervalSince(start.capturedAt)
+        let rise = current - start.utilization.value
+        guard span > 0, rise >= 1 else {
+            return .idle(span: now.timeIntervalSince(first.capturedAt))
         }
-        return points.reduce(0) { $0 + ($1.0 - meanX) * ($1.1 - meanY) } / spread
+
+        var best = Pace.rising(pointsPerSecond: rise / span, span: span)
+        if isShortHorizon,
+           let recentStart = samples.first(where: { $0.capturedAt >= now.addingTimeInterval(-recentPaceWindow) }),
+           now.timeIntervalSince(recentStart.capturedAt) >= minimumRecentPaceSpan {
+            let recentSpan = now.timeIntervalSince(recentStart.capturedAt)
+            let recentRate = (current - recentStart.utilization.value) / recentSpan
+            if case let .rising(rate, _) = best, recentRate > rate {
+                best = .rising(pointsPerSecond: recentRate, span: recentSpan)
+            }
+        }
+        return best
     }
 
     enum DurationStyle {
@@ -445,9 +466,13 @@ enum ProviderCardPresenter {
     }
 
     /// "~6:20 PM" today, "Mon ~12:20 AM" within six days, otherwise "Oct 20 ~9:00 AM". Rounded
-    /// down to ten minutes so the estimate never lands after the moment it describes.
+    /// down to ten minutes so the estimate never lands after the moment it describes; anything
+    /// that close is simply "within minutes".
     static func approximateTimeText(_ date: Date, now: Date, timeZone: TimeZone) -> String {
         let rounded = Date(timeIntervalSince1970: (date.timeIntervalSince1970 / 600).rounded(.down) * 600)
+        guard rounded > now else {
+            return "within minutes"
+        }
         let time = "~\(timeText(rounded, timeZone: timeZone))"
         if gregorian(timeZone).isDate(rounded, inSameDayAs: now) {
             return time

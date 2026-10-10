@@ -112,6 +112,7 @@ final class UsageMonitorStore: ObservableObject {
         case .closeSettings:
             navigation.isSettingsPresented = false
             navigation.isProviderConnectionsPresented = false
+            navigation.connectionsOpenedFromList = nil
             providerAuthenticationChallenge = nil
             providerConnectionError = nil
             authenticationObservationTask?.cancel()
@@ -120,6 +121,7 @@ final class UsageMonitorStore: ObservableObject {
         case .showProviderConnections:
             navigation.isSettingsPresented = true
             navigation.isProviderConnectionsPresented = true
+            navigation.connectionsOpenedFromList = true
             providerAuthenticationChallenge = nil
             providerConnectionError = nil
             await refreshProviderConnections()
@@ -130,6 +132,10 @@ final class UsageMonitorStore: ObservableObject {
             await refreshProviderConnections()
         case .closeProviderConnections:
             navigation.isProviderConnectionsPresented = false
+            if navigation.connectionsOpenedFromList == true {
+                navigation.isSettingsPresented = false
+                navigation.connectionsOpenedFromList = nil
+            }
             providerAuthenticationChallenge = nil
             providerConnectionError = nil
             authenticationObservationTask?.cancel()

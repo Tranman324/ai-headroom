@@ -28,6 +28,8 @@ struct AppNavigationState: Codable, Equatable, Sendable {
     var isProviderConnectionsPresented: Bool
     var isHistoryExpanded: Bool
     var detailRange: MeterDetailRange
+    /// Set when Connections was opened straight from the usage list, so Back returns there.
+    var connectionsOpenedFromList: Bool?
 
     init(
         meterRoute: MeterDetailRoute = .list,
