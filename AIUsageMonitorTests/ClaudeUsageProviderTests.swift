@@ -12,7 +12,7 @@ final class ClaudeUsageProviderTests: XCTestCase {
             sevenDay: ClaudeRateLimitCache(usedPercentage: 57, resetsAtUnixSeconds: 1_784_419_200)
         )
         let provider = ClaudeUsageProvider(
-            cli: StubClaudeCLI(statuses: [loggedInStatus]),
+            cli: StubClaudeCLI(statuses: [loggedInStatus], usage: .failure(.usageRequestRejected)),
             usageCache: StubClaudeUsageCache(cache: cache),
             statusLineInstaller: StubClaudeStatusLineInstaller(installed: true),
             overrides: automaticSource,
@@ -822,6 +822,117 @@ final class ClaudeUsageProviderTests: XCTestCase {
         XCTAssertEqual(status.detail, "Usage sync enabled")
     }
 
+    func testLiveUsageWithNoUsableWindowsUsesAFreshStatusLineCache() async throws {
+        let cache = ClaudeUsageCache(
+            capturedAtUnixSeconds: checkedAt.timeIntervalSince1970,
+            fiveHour: ClaudeRateLimitCache(usedPercentage: 12, resetsAtUnixSeconds: checkedAt.addingTimeInterval(60 * 60).timeIntervalSince1970),
+            sevenDay: nil
+        )
+        let provider = ClaudeUsageProvider(
+            cli: StubClaudeCLI(statuses: [loggedInStatus], usage: .success(ClaudeUsageLimits(
+                fiveHour: ClaudeUsageLimitWindow(utilization: nil, resetsAt: nil)
+            ))),
+            usageCache: StubClaudeUsageCache(cache: cache),
+            statusLineInstaller: StubClaudeStatusLineInstaller(installed: true),
+            overrides: automaticSource,
+            clock: FixedClock(now: checkedAt)
+        )
+
+        let snapshot = try await provider.fetchUsageSnapshot()
+
+        XCTAssertEqual(snapshot.health, .fresh(checkedAt: checkedAt))
+        XCTAssertEqual(snapshot.meters.map(\.utilization.value), [12])
+    }
+
+    func testLiveFailureIsReportedEvenWhenTheFallbackCacheIsMalformed() async {
+        // The live source is primary, so its failure is what the menu shows; a bad cache
+        // is reported by --diagnose instead of replacing the live error.
+        let malformedCache = ClaudeUsageCache(
+            capturedAtUnixSeconds: checkedAt.timeIntervalSince1970,
+            fiveHour: ClaudeRateLimitCache(usedPercentage: 101, resetsAtUnixSeconds: checkedAt.addingTimeInterval(60 * 60).timeIntervalSince1970),
+            sevenDay: nil
+        )
+        let provider = ClaudeUsageProvider(
+            cli: StubClaudeCLI(statuses: [loggedInStatus], usage: .failure(.usageRequestTimedOut)),
+            usageCache: StubClaudeUsageCache(cache: malformedCache),
+            statusLineInstaller: StubClaudeStatusLineInstaller(installed: true),
+            overrides: automaticSource,
+            clock: FixedClock(now: checkedAt)
+        )
+
+        await assertFetchFails(provider, with: .usageUnavailable(provider: .claude))
+    }
+
+    func testStatusLineCacheWhoseWindowsHaveAllResetIsNoDataNotMalformed() async throws {
+        let cache = ClaudeUsageCache(
+            capturedAtUnixSeconds: checkedAt.addingTimeInterval(-6 * 60 * 60).timeIntervalSince1970,
+            fiveHour: ClaudeRateLimitCache(usedPercentage: 90, resetsAtUnixSeconds: checkedAt.addingTimeInterval(-60).timeIntervalSince1970),
+            sevenDay: nil
+        )
+        let provider = ClaudeUsageProvider(
+            cli: StubClaudeCLI(statuses: [loggedInStatus]),
+            usageCache: StubClaudeUsageCache(cache: cache),
+            statusLineInstaller: StubClaudeStatusLineInstaller(installed: true),
+            overrides: statusLineSource,
+            clock: FixedClock(now: checkedAt)
+        )
+
+        let snapshot = try await provider.fetchUsageSnapshot()
+
+        XCTAssertEqual(snapshot.health, .noData(checkedAt: checkedAt))
+    }
+
+    func testCancellingAFetchStopsTheCLIAndDoesNotFallBackToTheCache() async throws {
+        let pidURL = temporaryDirectory().appendingPathExtension("pid")
+        let script = """
+        if [ "$1 $2 $3" = "auth status --json" ]; then
+          printf '%s\\n' '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}'
+          exit 0
+        fi
+        echo $$ > "\(pidURL.path)"
+        while IFS= read -r line; do :; done
+        """
+        let freshCache = ClaudeUsageCache(
+            capturedAtUnixSeconds: checkedAt.timeIntervalSince1970,
+            fiveHour: ClaudeRateLimitCache(usedPercentage: 12, resetsAtUnixSeconds: checkedAt.addingTimeInterval(60 * 60).timeIntervalSince1970),
+            sevenDay: nil
+        )
+        let provider = ClaudeUsageProvider(
+            cli: scriptedClient(script, timeout: .seconds(30)),
+            usageCache: StubClaudeUsageCache(cache: freshCache),
+            statusLineInstaller: StubClaudeStatusLineInstaller(installed: true),
+            overrides: automaticSource,
+            clock: FixedClock(now: checkedAt)
+        )
+
+        let fetch = Task { try await provider.fetchUsageSnapshot() }
+        var processID: pid_t?
+        for _ in 0 ..< 500 where processID == nil {
+            processID = (try? String(contentsOf: pidURL, encoding: .utf8))
+                .flatMap { pid_t($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            if processID == nil {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
+        let runningProcessID = try XCTUnwrap(processID, "The usage CLI never started")
+        fetch.cancel()
+
+        do {
+            let snapshot = try await fetch.value
+            XCTFail("A cancelled poll must not be turned into a result: \(snapshot.health.kind)")
+        } catch {
+            XCTAssertTrue(error is CancellationError, "Expected CancellationError, got \(error)")
+        }
+        var stillRunning = true
+        for _ in 0 ..< 100 where stillRunning {
+            stillRunning = kill(runningProcessID, 0) == 0
+            if stillRunning {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+        }
+        XCTAssertFalse(stillRunning, "A cancelled poll must not leave the CLI running")
+    }
+
     func testModelNamesMapToWeeklyMeterKinds() {
         XCTAssertEqual(ClaudeUsageProvider.weeklyMeterKind(forModelNamed: "Fable"), .claudeWeekFable)
         XCTAssertEqual(ClaudeUsageProvider.weeklyMeterKind(forModelNamed: "Claude Sonnet"), .claudeWeekSonnet)
@@ -886,9 +997,9 @@ final class ClaudeUsageProviderTests: XCTestCase {
 
     func testCLIClientReadsUsageThroughHardenedControlProtocol() async throws {
         let script = """
-        for required in --safe-mode --no-session-persistence --strict-mcp-config --input-format --output-format; do
-          case " $* " in *" $required "*) ;; *) exit 64 ;; esac
-        done
+        # The exact argument list matters: print-mode stream-json output requires --verbose,
+        # and safe mode plus no persistence keep hooks, MCP servers, and history out of polling.
+        [ "$*" = "-p --input-format stream-json --output-format stream-json --verbose --safe-mode --no-session-persistence --strict-mcp-config" ] || exit 64
         while IFS= read -r line; do
           case "$line" in
             *get_usage*)

@@ -414,7 +414,9 @@ private final class ClaudeControlSession: @unchecked Sendable {
         process.standardError = FileHandle.nullDevice
 
         var continuation: AsyncStream<Data>.Continuation?
-        let lines = AsyncStream<Data>(bufferingPolicy: .bufferingNewest(64)) { continuation = $0 }
+        // Unbounded so a burst of unrelated messages can never evict the control response;
+        // each record is capped by ClaudeLineSplitter and the process lives for seconds.
+        let lines = AsyncStream<Data>(bufferingPolicy: .unbounded) { continuation = $0 }
         guard let linesContinuation = continuation else {
             throw ClaudeCLIFailure.executableUnavailable
         }

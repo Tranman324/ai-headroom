@@ -65,17 +65,52 @@ final class ProviderRecoveryTests: XCTestCase {
         )
     }
 
-    func testOverridePathStillRequiresTheProviderSignature() throws {
+    func testUntrustedCandidateIsSkippedForTheNextTrustedOne() throws {
         let locator = ClaudeCLIRuntimeLocator(
-            candidateExecutablePaths: ["/tmp/impostor/claude", "/opt/homebrew/bin/claude"],
+            candidateExecutablePaths: ["/nonexistent/impostor/claude", "/nonexistent/trusted/claude"],
             isExecutable: { _ in true },
-            isTrustedExecutable: { $0.path == "/opt/homebrew/bin/claude" }
+            isTrustedExecutable: { $0.path == "/nonexistent/trusted/claude" }
         )
 
         let runtime = try XCTUnwrap(locator.runtime())
 
-        XCTAssertEqual(runtime.executableURL.path, URL(fileURLWithPath: "/opt/homebrew/bin/claude").resolvingSymlinksInPath().path)
+        XCTAssertEqual(runtime.executableURL.path, "/nonexistent/trusted/claude")
         XCTAssertEqual(locator.inspectCandidates().map(\.status), [.untrusted, .trusted])
+    }
+
+    func testClaudeOverridePathStillRequiresTheAnthropicSignature() {
+        let impostor = "/nonexistent/impostor/claude"
+        let locator = ClaudeCLIRuntimeLocator(
+            overrides: FixedProviderRuntimeOverrides(claudeExecutablePath: impostor),
+            isExecutable: { $0 == impostor },
+            isTrustedExecutable: { $0.path != impostor }
+        )
+
+        XCTAssertNil(locator.runtime(), "An override must never bypass the signature check")
+        XCTAssertEqual(locator.inspectCandidates().first, ProviderExecutableCandidate(path: impostor, status: .untrusted))
+    }
+
+    func testCodexOverridePathStillRequiresTheOpenAISignature() {
+        let impostor = "/nonexistent/impostor/codex"
+        let locator = CodexAppServerRuntimeLocator(
+            overrides: FixedProviderRuntimeOverrides(codexExecutablePath: impostor),
+            isExecutable: { $0 == impostor },
+            isTrustedExecutable: { $0.path != impostor }
+        )
+
+        XCTAssertNil(locator.runtime(), "An override must never bypass the signature check")
+        XCTAssertEqual(locator.inspectCandidates().first, ProviderExecutableCandidate(path: impostor, status: .untrusted))
+    }
+
+    func testTrustedOverridePathIsPreferredOverDefaultLocations() throws {
+        let override = "/nonexistent/custom/codex"
+        let locator = CodexAppServerRuntimeLocator(
+            overrides: FixedProviderRuntimeOverrides(codexExecutablePath: override),
+            isExecutable: { _ in true },
+            isTrustedExecutable: { _ in true }
+        )
+
+        XCTAssertEqual(try XCTUnwrap(locator.runtime()).executableURL.path, override)
     }
 
     func testSelectionStopsCheckingSignaturesAfterTheFirstTrustedMatch() {
@@ -170,11 +205,96 @@ final class ProviderRecoveryTests: XCTestCase {
         XCTAssertTrue(report.contains("Summary: Claude NOT OK, Codex NOT OK"))
     }
 
+    func testDiagnosticsSuccessReportShowsMetersButNoAccountDetailsOrSecrets() async {
+        let claudeScript = """
+        if [ "$1 $2 $3" = "auth status --json" ]; then
+          printf '%s\\n' '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max","email":"private@example.com","orgId":"org-secret-id"}'
+          exit 0
+        fi
+        while IFS= read -r line; do
+          case "$line" in
+            *get_usage*) printf '%s\\n' '{"type":"control_response","response":{"subtype":"success","request_id":"\(ClaudeCLIClient.usageRequestID)","response":{"access_token":"sk-ant-oat01-FAKE","email":"private@example.com","subscription_type":"max","rate_limits":{"five_hour":{"utilization":36,"resets_at":"2099-01-01T00:00:00Z"},"seven_day":{"utilization":81,"resets_at":"2099-01-02T00:00:00Z"}}}}}' ;;
+            *initialize*) printf '%s\\n' '{"type":"control_response","response":{"subtype":"success","request_id":"\(ClaudeCLIClient.initializeRequestID)","response":{"account":{"email":"private@example.com"}}}}' ;;
+          esac
+        done
+        """
+        let codexScript = """
+        while IFS= read -r line; do
+          id=$(printf '%s' "$line" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p')
+          case "$line" in
+            *rateLimits*read*) printf '{"id":%s,"result":{"accountId":"acct-secret-id","rateLimits":{"primary":{"usedPercent":44,"windowDurationMins":10080,"resetsAt":4070908800},"secondary":null}}}\\n' "$id" ;;
+            *account*read*) printf '{"id":%s,"result":{"account":{"type":"chatgpt","planType":"prolite","email":"private@example.com"}}}\\n' "$id" ;;
+            *initialize*) printf '{"id":%s,"result":{}}\\n' "$id" ;;
+          esac
+        done
+        """
+        let lines = CollectedLines()
+        let suiteName = "AIUsageMonitorTests.\(UUID().uuidString)"
+        defer { UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName) }
+        let environment = ProviderDiagnosticsEnvironment(
+            overrides: FixedProviderRuntimeOverrides(claudeUsageSource: .automatic),
+            defaults: UserDefaultsProviderRuntimeOverrides(suiteName: suiteName),
+            claudeLocator: ScriptedClaudeLocator(script: claudeScript),
+            codexLocator: ScriptedCodexLocator(script: codexScript),
+            usageCache: ClaudeUsageCacheStore(rootProvider: FixedStorageRootProvider(storageRoot: makeTemporaryDirectory())),
+            statusLineInstaller: ClaudeStatusLineInstaller(
+                settingsURL: makeTemporaryDirectory().appendingPathComponent("settings.json"),
+                rootProvider: FixedStorageRootProvider(storageRoot: makeTemporaryDirectory()),
+                executableURL: URL(fileURLWithPath: "/Applications/AI Usage Monitor.app/Contents/MacOS/AI Usage Monitor")
+            ),
+            clock: FixedClock(now: Date(timeIntervalSince1970: 1_783_756_800))
+        )
+
+        let status = await ProviderDiagnosticsCommand.run(environment: environment, output: { lines.append($0) })
+        let report = lines.joined
+
+        XCTAssertEqual(status, 0, report)
+        for expected in [
+            "Sign-in: loggedIn=true method=claude.ai plan=max",
+            "Live usage (CLI get_usage): ok",
+            "five_hour: 36% used",
+            "Claude Session: 36% used",
+            "Claude Week: 81% used",
+            "Account: connected plan=Pro 5x",
+            "Codex Week: 44% used",
+            "Summary: Claude OK, Codex OK"
+        ] {
+            XCTAssertTrue(report.contains(expected), "Missing \"\(expected)\" in:\n\(report)")
+        }
+        for forbidden in ["private@example.com", "org-secret-id", "acct-secret-id", "sk-ant", "bearer", "token", "email"] {
+            XCTAssertFalse(report.lowercased().contains(forbidden), "Report leaked \"\(forbidden)\":\n\(report)")
+        }
+    }
+
     private func makeTemporaryDirectory() -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         temporaryRoots.append(url)
         return url
+    }
+}
+
+private struct ScriptedClaudeLocator: ClaudeCLIRuntimeLocating, ProviderExecutableInspecting {
+    let script: String
+
+    func runtime() -> ClaudeCLIRuntime? {
+        ClaudeCLIRuntime(executableURL: URL(fileURLWithPath: "/bin/sh"), argumentPrefix: ["-c", script, "claude-test"])
+    }
+
+    func inspectCandidates() -> [ProviderExecutableCandidate] {
+        [ProviderExecutableCandidate(path: "/bin/sh", status: .trusted)]
+    }
+}
+
+private struct ScriptedCodexLocator: CodexAppServerRuntimeLocating, ProviderExecutableInspecting {
+    let script: String
+
+    func runtime() -> CodexAppServerRuntime? {
+        CodexAppServerRuntime(executableURL: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", script])
+    }
+
+    func inspectCandidates() -> [ProviderExecutableCandidate] {
+        [ProviderExecutableCandidate(path: "/bin/sh", status: .trusted)]
     }
 }
 

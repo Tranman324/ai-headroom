@@ -85,6 +85,13 @@ struct ProviderExecutableCandidate: Equatable, Sendable {
     var status: Status
 }
 
+protocol ProviderExecutableInspecting: Sendable {
+    func inspectCandidates() -> [ProviderExecutableCandidate]
+}
+
+extension ClaudeCLIRuntimeLocator: ProviderExecutableInspecting {}
+extension CodexAppServerRuntimeLocator: ProviderExecutableInspecting {}
+
 enum ProviderExecutableSelection {
     /// Checks candidates in order. Signature checks are skipped after the first trusted
     /// match unless `inspectAll` is set, which diagnostics use to report every path.
@@ -253,8 +260,8 @@ enum ProcessSignalPolicy {
 struct ProviderDiagnosticsEnvironment: Sendable {
     var overrides: any ProviderRuntimeOverriding
     var defaults: UserDefaultsProviderRuntimeOverrides
-    var claudeLocator: ClaudeCLIRuntimeLocator
-    var codexLocator: CodexAppServerRuntimeLocator
+    var claudeLocator: any ClaudeCLIRuntimeLocating & ProviderExecutableInspecting
+    var codexLocator: any CodexAppServerRuntimeLocating & ProviderExecutableInspecting
     var usageCache: any ClaudeUsageCacheReading
     var statusLineInstaller: any ClaudeStatusLineInstalling
     var clock: any ClockProviding

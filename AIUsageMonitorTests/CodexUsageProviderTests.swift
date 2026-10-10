@@ -260,6 +260,17 @@ final class CodexUsageProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.meters.map(\.utilization.value), [15, 70])
     }
 
+    func testWindowsUpToOneDayAreSessionsAndLongerOnesAreWeekly() async throws {
+        for (duration, expected) in [(300.0, MeterKind.codexSession), (1_440, .codexSession), (1_441, .codexWeek)] {
+            let snapshot = try await fetch(CodexAppServerUsage(
+                planType: "plus",
+                primaryWindow: CodexAppServerUsageWindow(usedPercent: 10, windowDurationMinutes: duration, resetsAtUnixSeconds: 1_783_782_000),
+                secondaryWindow: nil
+            ))
+            XCTAssertEqual(snapshot.meters.map(\.kind), [expected], "duration \(duration)")
+        }
+    }
+
     func testWindowsWithoutDurationFallBackToPosition() async throws {
         let snapshot = try await fetch(CodexAppServerUsage(
             planType: "plus",
