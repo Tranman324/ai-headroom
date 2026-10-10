@@ -411,6 +411,21 @@ final class LocalHistoryStoreTests: XCTestCase {
         XCTAssertEqual(normalized.meters.first?.utilization.value, 45)
     }
 
+    func testInMemoryHistoryDoubleRebuildsPollerRecordsLikeTheFileStore() async throws {
+        // Fixture mode and store tests use this double; it must not reintroduce empty history.
+        let store = InMemoryHistoryStore()
+        let capturedAt = UsageMonitorFixtures.baseDate
+        try await store.appendProviderSnapshot(
+            providerSnapshot(.codex, kinds: [.codexWeek], percent: 30, capturedAt: capturedAt),
+            capturedAt: capturedAt
+        )
+
+        let snapshots = try await store.snapshots(since: .distantPast)
+
+        XCTAssertEqual(snapshots.map(\.capturedAt), [capturedAt])
+        XCTAssertEqual(snapshots.first?.meters.map(\.kind), [.codexWeek])
+    }
+
     func testLaunchRecoveryRelabelsALegacyWeeklyReading() async throws {
         let store = makeStore(root: try temporaryRoot())
         let capturedAt = UsageMonitorFixtures.baseDate
