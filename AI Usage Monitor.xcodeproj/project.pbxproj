@@ -18,6 +18,8 @@
 		B1000000000000000000001C /* ClaudeUsageProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001C /* ClaudeUsageProvider.swift */; };
 		B1000000000000000000001E /* CodexUsageProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001E /* CodexUsageProvider.swift */; };
 		B40000000000000000000001 /* CodexAppServerClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A40000000000000000000001 /* CodexAppServerClient.swift */; };
+		B40000000000000000000002 /* ProviderRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = A40000000000000000000002 /* ProviderRecovery.swift */; };
+		B40000000000000000000003 /* ProviderRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A40000000000000000000003 /* ProviderRecoveryTests.swift */; };
 		B10000000000000000000017 /* AppDependencies.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* AppDependencies.swift */; };
 		B10000000000000000000018 /* AppCompositionRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* AppCompositionRoot.swift */; };
 		B10000000000000000000019 /* UsageMonitorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* UsageMonitorStore.swift */; };
@@ -86,6 +88,8 @@
 		A1000000000000000000001C /* ClaudeUsageProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeUsageProvider.swift; sourceTree = "<group>"; };
 		A1000000000000000000001E /* CodexUsageProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexUsageProvider.swift; sourceTree = "<group>"; };
 		A40000000000000000000001 /* CodexAppServerClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexAppServerClient.swift; sourceTree = "<group>"; };
+		A40000000000000000000002 /* ProviderRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderRecovery.swift; sourceTree = "<group>"; };
+		A40000000000000000000003 /* ProviderRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderRecoveryTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000017 /* AppDependencies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDependencies.swift; sourceTree = "<group>"; };
 		A10000000000000000000018 /* AppCompositionRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCompositionRoot.swift; sourceTree = "<group>"; };
 		A10000000000000000000019 /* UsageMonitorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageMonitorStore.swift; sourceTree = "<group>"; };
@@ -202,6 +206,7 @@
 				A1000000000000000000001C /* ClaudeUsageProvider.swift */,
 				A1000000000000000000001E /* CodexUsageProvider.swift */,
 				A40000000000000000000001 /* CodexAppServerClient.swift */,
+				A40000000000000000000002 /* ProviderRecovery.swift */,
 				A1000000000000000000002D /* LocalPersistence.swift */,
 				A30000000000000000000002 /* PlatformAdapters.swift */,
 			);
@@ -253,6 +258,7 @@
 				A10000000000000000000026 /* LifecycleContractTests.swift */,
 				A10000000000000000000028 /* ClaudeUsageProviderTests.swift */,
 				A10000000000000000000029 /* CodexUsageProviderTests.swift */,
+				A40000000000000000000003 /* ProviderRecoveryTests.swift */,
 				A1000000000000000000002E /* LocalHistoryStoreTests.swift */,
 				A1000000000000000000002F /* LocalSettingsStoreTests.swift */,
 				A1000000000000000000002A /* UsageAnalyticsTests.swift */,
@@ -426,6 +432,7 @@
 				B1000000000000000000001C /* ClaudeUsageProvider.swift in Sources */,
 				B1000000000000000000001E /* CodexUsageProvider.swift in Sources */,
 				B40000000000000000000001 /* CodexAppServerClient.swift in Sources */,
+				B40000000000000000000002 /* ProviderRecovery.swift in Sources */,
 				B1000000000000000000002D /* LocalPersistence.swift in Sources */,
 				B30000000000000000000002 /* PlatformAdapters.swift in Sources */,
 			);
@@ -444,6 +451,7 @@
 				B10000000000000000000026 /* LifecycleContractTests.swift in Sources */,
 				B10000000000000000000028 /* ClaudeUsageProviderTests.swift in Sources */,
 				B10000000000000000000029 /* CodexUsageProviderTests.swift in Sources */,
+				B40000000000000000000003 /* ProviderRecoveryTests.swift in Sources */,
 				B1000000000000000000002E /* LocalHistoryStoreTests.swift in Sources */,
 				B1000000000000000000002F /* LocalSettingsStoreTests.swift in Sources */,
 				B1000000000000000000002A /* UsageAnalyticsTests.swift in Sources */,

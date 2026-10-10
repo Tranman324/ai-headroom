@@ -1,6 +1,7 @@
 import Foundation
 
 enum CodexAppServerFailure: Error, Equatable, Sendable {
+    case executableNotFound
     case executableUnavailable
     case processUnavailable
     case authenticationRequired
@@ -11,6 +12,8 @@ enum CodexAppServerFailure: Error, Equatable, Sendable {
 struct CodexAppServerRuntime: Equatable, Sendable {
     var executableURL: URL
     var arguments: [String]
+    /// Tried when the app-server exits during startup, in case a newer CLI drops a flag.
+    var alternateArguments: [String]?
 }
 
 protocol CodexAppServerRuntimeLocating: Sendable {
@@ -18,49 +21,69 @@ protocol CodexAppServerRuntimeLocating: Sendable {
 }
 
 struct CodexAppServerRuntimeLocator: CodexAppServerRuntimeLocating {
-    private let candidateExecutablePaths: [String]
+    static let arguments = ["app-server", "--stdio"]
+    static let alternateArguments = ["app-server"]
+
+    private let candidateExecutablePaths: @Sendable () -> [String]
     private let isExecutable: @Sendable (String) -> Bool
     private let isTrustedExecutable: @Sendable (URL) -> Bool
 
     init(
-        candidateExecutablePaths: [String] = Self.defaultCandidateExecutablePaths,
-        isExecutable: @escaping @Sendable (String) -> Bool = { path in
-            FileManager.default.isExecutableFile(atPath: path)
-        },
-        isTrustedExecutable: @escaping @Sendable (URL) -> Bool = { url in
-            ProviderExecutableTrust.satisfies(
-                ProviderExecutableTrust.openAIRequirement,
-                executableURL: url
-            )
-        }
+        candidateExecutablePaths: [String],
+        isExecutable: @escaping @Sendable (String) -> Bool = Self.defaultIsExecutable,
+        isTrustedExecutable: @escaping @Sendable (URL) -> Bool = Self.defaultIsTrustedExecutable
     ) {
-        self.candidateExecutablePaths = candidateExecutablePaths
+        self.candidateExecutablePaths = { candidateExecutablePaths }
+        self.isExecutable = isExecutable
+        self.isTrustedExecutable = isTrustedExecutable
+    }
+
+    init(
+        overrides: any ProviderRuntimeOverriding = UserDefaultsProviderRuntimeOverrides(),
+        isExecutable: @escaping @Sendable (String) -> Bool = Self.defaultIsExecutable,
+        isTrustedExecutable: @escaping @Sendable (URL) -> Bool = Self.defaultIsTrustedExecutable
+    ) {
+        self.candidateExecutablePaths = {
+            ProviderExecutableDiscovery.codexCandidatePaths(overrides: overrides)
+        }
         self.isExecutable = isExecutable
         self.isTrustedExecutable = isTrustedExecutable
     }
 
     func runtime() -> CodexAppServerRuntime? {
-        if let path = candidateExecutablePaths.first(where: { path in
-            isExecutable(path) && isTrustedExecutable(URL(fileURLWithPath: path))
-        }) {
-            return CodexAppServerRuntime(
-                executableURL: URL(fileURLWithPath: path).resolvingSymlinksInPath(),
-                arguments: ["app-server", "--stdio"]
+        let candidates = ProviderExecutableSelection.inspect(
+            paths: candidateExecutablePaths(),
+            isExecutable: isExecutable,
+            isTrustedExecutable: isTrustedExecutable,
+            inspectAll: false
+        )
+        return ProviderExecutableSelection.firstTrustedURL(in: candidates).map {
+            CodexAppServerRuntime(
+                executableURL: $0,
+                arguments: Self.arguments,
+                alternateArguments: Self.alternateArguments
             )
         }
-        return nil
     }
 
-    private static var defaultCandidateExecutablePaths: [String] {
-        let homeDirectory = NSHomeDirectory()
-        return [
-            "/Applications/ChatGPT.app/Contents/Resources/codex",
-            "\(homeDirectory)/Applications/ChatGPT.app/Contents/Resources/codex",
-            "\(homeDirectory)/.local/bin/codex",
-            "\(homeDirectory)/.codex/bin/codex",
-            "/opt/homebrew/bin/codex",
-            "/usr/local/bin/codex"
-        ]
+    func inspectCandidates() -> [ProviderExecutableCandidate] {
+        ProviderExecutableSelection.inspect(
+            paths: candidateExecutablePaths(),
+            isExecutable: isExecutable,
+            isTrustedExecutable: isTrustedExecutable,
+            inspectAll: true
+        )
+    }
+
+    static let defaultIsExecutable: @Sendable (String) -> Bool = { path in
+        FileManager.default.isExecutableFile(atPath: path)
+    }
+
+    static let defaultIsTrustedExecutable: @Sendable (URL) -> Bool = { url in
+        ProviderExecutableTrust.satisfies(
+            ProviderExecutableTrust.openAIRequirement,
+            executableURL: url
+        )
     }
 }
 
@@ -96,12 +119,14 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
     init(
         executableURL: URL,
         executableArguments: [String],
+        alternateExecutableArguments: [String]? = nil,
         requestTimeout: Duration = .seconds(15)
     ) {
         self.runtimeLocator = nil
         self.explicitRuntime = CodexAppServerRuntime(
             executableURL: executableURL,
-            arguments: executableArguments
+            arguments: executableArguments,
+            alternateArguments: alternateExecutableArguments
         )
         self.requestTimeout = requestTimeout
     }
@@ -124,21 +149,14 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
         }
 
         let rateLimitResponse = try await sendRequest(method: "account/rateLimits/read")
-        let rateLimits = try decode(CodexRateLimitResponse.self, from: rateLimitResponse)
+        let rateLimits = try decode(CodexRateLimitResponse.self, from: rateLimitResponse).rateLimits
+        guard rateLimits.primary != nil || rateLimits.secondary != nil else {
+            throw CodexAppServerFailure.malformedResponse
+        }
         return CodexAppServerUsage(
             planType: account.planType,
-            primaryWindow: CodexAppServerUsageWindow(
-                usedPercent: rateLimits.rateLimits.primary.usedPercent,
-                windowDurationMinutes: rateLimits.rateLimits.primary.windowDurationMinutes,
-                resetsAtUnixSeconds: rateLimits.rateLimits.primary.resetsAt
-            ),
-            secondaryWindow: rateLimits.rateLimits.secondary.map {
-                CodexAppServerUsageWindow(
-                    usedPercent: $0.usedPercent,
-                    windowDurationMinutes: $0.windowDurationMinutes,
-                    resetsAtUnixSeconds: $0.resetsAt
-                )
-            }
+            primaryWindow: rateLimits.primary.map(\.usageWindow),
+            secondaryWindow: rateLimits.secondary.map(\.usageWindow)
         )
     }
 
@@ -170,43 +188,53 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
         guard process == nil else {
             return
         }
-
-        do {
-            try startProcess()
-        } catch {
-            throw CodexAppServerFailure.executableUnavailable
+        // Resolved on every launch so a CLI moved by an app update is found without a restart.
+        guard let runtime = runtimeLocator?.runtime() ?? explicitRuntime else {
+            throw CodexAppServerFailure.executableNotFound
         }
 
-        do {
-            _ = try await sendRequest(
-                method: "initialize",
-                parameters: [
-                    "clientInfo": [
-                        "name": "ai_usage_monitor",
-                        "title": "AI Usage Monitor",
-                        "version": "1.0"
+        let argumentSets = [runtime.arguments] + (runtime.alternateArguments.map { [$0] } ?? [])
+        for (index, arguments) in argumentSets.enumerated() {
+            do {
+                try startProcess(executableURL: runtime.executableURL, arguments: arguments)
+            } catch {
+                throw CodexAppServerFailure.executableUnavailable
+            }
+
+            do {
+                _ = try await sendRequest(
+                    method: "initialize",
+                    parameters: [
+                        "clientInfo": [
+                            "name": "ai_usage_monitor",
+                            "title": "AI Usage Monitor",
+                            "version": "1.0"
+                        ]
                     ]
-                ]
-            )
-            try sendNotification(method: "initialized")
-        } catch {
-            stopProcess()
-            throw error
+                )
+                try sendNotification(method: "initialized")
+                return
+            } catch {
+                stopProcess()
+                // Only an app-server that exited during startup suggests rejected arguments.
+                let exitedDuringStartup = (error as? CodexAppServerFailure) == .processUnavailable
+                guard exitedDuringStartup, index < argumentSets.count - 1 else {
+                    throw error
+                }
+            }
         }
     }
 
-    private func startProcess() throws {
-        guard let runtime = runtimeLocator?.runtime() ?? explicitRuntime else {
-            throw CodexAppServerFailure.executableUnavailable
-        }
+    private func startProcess(executableURL: URL, arguments: [String]) throws {
+        ProcessSignalPolicy.ignoreBrokenPipes()
         let input = Pipe()
         let output = Pipe()
         let standardError = Pipe()
         let newProcess = Process()
         let token = UUID()
 
-        newProcess.executableURL = runtime.executableURL
-        newProcess.arguments = runtime.arguments
+        newProcess.executableURL = executableURL
+        newProcess.arguments = arguments
         newProcess.standardInput = input
         newProcess.standardOutput = output
         newProcess.standardError = standardError
@@ -279,7 +307,7 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
                     } catch {
                         return
                     }
-                    await self?.failPendingRequest(identifier, with: CodexAppServerFailure.requestFailed)
+                    await self?.requestDidTimeOut(identifier)
                 }
                 do {
                     try write(request)
@@ -311,9 +339,13 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
         guard let standardInput else {
             throw CodexAppServerFailure.processUnavailable
         }
-        let data = try JSONSerialization.data(withJSONObject: message)
-        standardInput.write(data)
-        standardInput.write(Data([0x0A]))
+        var data = try JSONSerialization.data(withJSONObject: message)
+        data.append(0x0A)
+        do {
+            try standardInput.write(contentsOf: data)
+        } catch {
+            throw CodexAppServerFailure.processUnavailable
+        }
     }
 
     private func receive(data: Data) {
@@ -407,6 +439,15 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
         }
     }
 
+    private func requestDidTimeOut(_ identifier: Int) {
+        guard pendingResponses[identifier] != nil else {
+            return
+        }
+        // A hung app-server would fail every later poll; dropping it makes the next request relaunch.
+        stopProcess()
+        failPendingResponses(with: .requestFailed)
+    }
+
     private func failPendingRequest(_ identifier: Int, with error: any Error) {
         guard let continuation = pendingResponses.removeValue(forKey: identifier) else {
             return
@@ -430,14 +471,22 @@ private struct CodexRateLimitResponse: Decodable {
 }
 
 private struct CodexRateLimits: Decodable {
-    var primary: CodexRateLimitWindow
+    var primary: CodexRateLimitWindow?
     var secondary: CodexRateLimitWindow?
 }
 
 private struct CodexRateLimitWindow: Decodable {
     var usedPercent: Double
-    var windowDurationMinutes: Double
-    var resetsAt: Double
+    var windowDurationMinutes: Double?
+    var resetsAt: Double?
+
+    var usageWindow: CodexAppServerUsageWindow {
+        CodexAppServerUsageWindow(
+            usedPercent: usedPercent,
+            windowDurationMinutes: windowDurationMinutes,
+            resetsAtUnixSeconds: resetsAt
+        )
+    }
 
     enum CodingKeys: String, CodingKey {
         case usedPercent

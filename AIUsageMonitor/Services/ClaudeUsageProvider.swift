@@ -2,9 +2,38 @@ import Darwin
 import Foundation
 
 enum ClaudeCLIFailure: Error, Equatable, Sendable {
+    case executableNotFound
     case executableUnavailable
     case processFailed
     case malformedStatus
+    case usageRequestRejected
+    case usageRequestFailed
+    case usageRequestTimedOut
+    case usageUnavailable
+    case malformedUsage
+
+    var diagnosticDescription: String {
+        switch self {
+        case .executableNotFound:
+            return "no trusted Claude Code CLI was found"
+        case .executableUnavailable:
+            return "the Claude Code CLI could not be launched"
+        case .processFailed:
+            return "the Claude Code CLI command failed"
+        case .malformedStatus:
+            return "the Claude Code CLI returned an unreadable sign-in status"
+        case .usageRequestRejected:
+            return "the Claude Code CLI rejected the get_usage request"
+        case .usageRequestFailed:
+            return "the Claude Code CLI exited before answering the get_usage request"
+        case .usageRequestTimedOut:
+            return "the Claude Code CLI did not answer the get_usage request in time"
+        case .usageUnavailable:
+            return "the Claude Code CLI returned no plan limits"
+        case .malformedUsage:
+            return "the Claude Code CLI returned usage in an unrecognized format"
+        }
+    }
 }
 
 struct ClaudeAuthenticationStatus: Equatable, Sendable {
@@ -20,6 +49,39 @@ struct ClaudeAuthenticationStatus: Equatable, Sendable {
 protocol ClaudeCLICommunicating: Sendable {
     func authenticationStatus() async throws -> ClaudeAuthenticationStatus
     func startClaudeAIAuthentication() async throws
+    func readUsageLimits() async throws -> ClaudeUsageLimits
+}
+
+struct ClaudeUsageLimitWindow: Equatable, Sendable {
+    var utilization: Double?
+    var resetsAt: Date?
+}
+
+struct ClaudeModelUsageLimit: Equatable, Sendable {
+    var displayName: String
+    var window: ClaudeUsageLimitWindow
+}
+
+struct ClaudeUsageLimits: Equatable, Sendable {
+    var subscriptionType: String?
+    var fiveHour: ClaudeUsageLimitWindow?
+    var sevenDay: ClaudeUsageLimitWindow?
+    var sevenDaySonnet: ClaudeUsageLimitWindow?
+    var modelScoped: [ClaudeModelUsageLimit]
+
+    init(
+        subscriptionType: String? = nil,
+        fiveHour: ClaudeUsageLimitWindow? = nil,
+        sevenDay: ClaudeUsageLimitWindow? = nil,
+        sevenDaySonnet: ClaudeUsageLimitWindow? = nil,
+        modelScoped: [ClaudeModelUsageLimit] = []
+    ) {
+        self.subscriptionType = subscriptionType
+        self.fiveHour = fiveHour
+        self.sevenDay = sevenDay
+        self.sevenDaySonnet = sevenDaySonnet
+        self.modelScoped = modelScoped
+    }
 }
 
 protocol ClaudeUsageCacheReading: Sendable {
@@ -42,56 +104,178 @@ protocol ClaudeCLIRuntimeLocating: Sendable {
 }
 
 struct ClaudeCLIRuntimeLocator: ClaudeCLIRuntimeLocating {
-    private let candidateExecutablePaths: [String]
+    private let candidateExecutablePaths: @Sendable () -> [String]
     private let isExecutable: @Sendable (String) -> Bool
     private let isTrustedExecutable: @Sendable (URL) -> Bool
 
     init(
-        candidateExecutablePaths: [String] = Self.defaultCandidateExecutablePaths,
-        isExecutable: @escaping @Sendable (String) -> Bool = { path in
-            FileManager.default.isExecutableFile(atPath: path)
-        },
-        isTrustedExecutable: @escaping @Sendable (URL) -> Bool = { url in
-            ProviderExecutableTrust.satisfies(
-                ProviderExecutableTrust.anthropicRequirement,
-                executableURL: url
-            )
-        }
+        candidateExecutablePaths: [String],
+        isExecutable: @escaping @Sendable (String) -> Bool = Self.defaultIsExecutable,
+        isTrustedExecutable: @escaping @Sendable (URL) -> Bool = Self.defaultIsTrustedExecutable
     ) {
-        self.candidateExecutablePaths = candidateExecutablePaths
+        self.candidateExecutablePaths = { candidateExecutablePaths }
+        self.isExecutable = isExecutable
+        self.isTrustedExecutable = isTrustedExecutable
+    }
+
+    init(
+        overrides: any ProviderRuntimeOverriding = UserDefaultsProviderRuntimeOverrides(),
+        isExecutable: @escaping @Sendable (String) -> Bool = Self.defaultIsExecutable,
+        isTrustedExecutable: @escaping @Sendable (URL) -> Bool = Self.defaultIsTrustedExecutable
+    ) {
+        self.candidateExecutablePaths = {
+            ProviderExecutableDiscovery.claudeCandidatePaths(overrides: overrides)
+        }
         self.isExecutable = isExecutable
         self.isTrustedExecutable = isTrustedExecutable
     }
 
     func runtime() -> ClaudeCLIRuntime? {
-        if let path = candidateExecutablePaths.first(where: { path in
-            isExecutable(path) && isTrustedExecutable(URL(fileURLWithPath: path))
-        }) {
-            return ClaudeCLIRuntime(
-                executableURL: URL(fileURLWithPath: path).resolvingSymlinksInPath(),
-                argumentPrefix: []
-            )
+        let candidates = ProviderExecutableSelection.inspect(
+            paths: candidateExecutablePaths(),
+            isExecutable: isExecutable,
+            isTrustedExecutable: isTrustedExecutable,
+            inspectAll: false
+        )
+        return ProviderExecutableSelection.firstTrustedURL(in: candidates).map {
+            ClaudeCLIRuntime(executableURL: $0, argumentPrefix: [])
         }
-        return nil
     }
 
-    private static var defaultCandidateExecutablePaths: [String] {
-        let homeDirectory = NSHomeDirectory()
-        return [
-            "\(homeDirectory)/.local/bin/claude",
-            "\(homeDirectory)/.claude/bin/claude",
-            "\(homeDirectory)/.claude/local/claude",
-            "/opt/homebrew/bin/claude",
-            "/usr/local/bin/claude"
-        ]
+    func inspectCandidates() -> [ProviderExecutableCandidate] {
+        ProviderExecutableSelection.inspect(
+            paths: candidateExecutablePaths(),
+            isExecutable: isExecutable,
+            isTrustedExecutable: isTrustedExecutable,
+            inspectAll: true
+        )
+    }
+
+    static let defaultIsExecutable: @Sendable (String) -> Bool = { path in
+        FileManager.default.isExecutableFile(atPath: path)
+    }
+
+    static let defaultIsTrustedExecutable: @Sendable (URL) -> Bool = { url in
+        ProviderExecutableTrust.satisfies(
+            ProviderExecutableTrust.anthropicRequirement,
+            executableURL: url
+        )
     }
 }
 
 actor ClaudeCLIClient: ClaudeCLICommunicating {
-    private let runtimeLocator: any ClaudeCLIRuntimeLocating
+    /// Print mode with stream-json control messages lets the CLI answer `get_usage` with the
+    /// claude.ai plan limits using its own sign-in, without sending a prompt. Safe mode skips
+    /// hooks, plugins, and MCP servers, and nothing is written to the session history.
+    static let usageArguments = [
+        "-p",
+        "--input-format", "stream-json",
+        "--output-format", "stream-json",
+        "--verbose",
+        "--safe-mode",
+        "--no-session-persistence",
+        "--strict-mcp-config"
+    ]
+    static let initializeRequestID = "ai-usage-monitor-initialize"
+    static let usageRequestID = "ai-usage-monitor-usage"
 
-    init(runtimeLocator: any ClaudeCLIRuntimeLocating = ClaudeCLIRuntimeLocator()) {
+    private let runtimeLocator: any ClaudeCLIRuntimeLocating
+    private let usageTimeout: Duration
+    private let usageExitGracePeriod: Duration
+
+    init(
+        runtimeLocator: any ClaudeCLIRuntimeLocating = ClaudeCLIRuntimeLocator(),
+        usageTimeout: Duration = .seconds(30),
+        usageExitGracePeriod: Duration = .seconds(5)
+    ) {
         self.runtimeLocator = runtimeLocator
+        self.usageTimeout = usageTimeout
+        self.usageExitGracePeriod = usageExitGracePeriod
+    }
+
+    func readUsageLimits() async throws -> ClaudeUsageLimits {
+        try Task.checkCancellation()
+        guard let runtime = runtimeLocator.runtime() else {
+            throw ClaudeCLIFailure.executableNotFound
+        }
+        let session: ClaudeControlSession
+        do {
+            session = try ClaudeControlSession(
+                runtime: runtime,
+                arguments: Self.usageArguments,
+                environment: Self.usageProcessEnvironment(),
+                workingDirectory: FileManager.default.temporaryDirectory
+            )
+        } catch {
+            throw ClaudeCLIFailure.executableUnavailable
+        }
+
+        let timeout = usageTimeout
+        let body: Data
+        do {
+            body = try await withTaskCancellationHandler {
+                try await withThrowingTaskGroup(of: Data?.self) { group in
+                    group.addTask {
+                        try await session.exchange([
+                            (id: Self.initializeRequestID, subtype: "initialize"),
+                            (id: Self.usageRequestID, subtype: "get_usage")
+                        ])
+                    }
+                    group.addTask {
+                        try await Task.sleep(for: timeout)
+                        return nil
+                    }
+                    defer { group.cancelAll() }
+                    guard let first = try await group.next(), let response = first else {
+                        session.terminate()
+                        throw ClaudeCLIFailure.usageRequestTimedOut
+                    }
+                    return response
+                }
+            } onCancel: {
+                session.terminate()
+            }
+        } catch {
+            session.terminate()
+            if error is CancellationError {
+                throw error
+            }
+            throw error as? ClaudeCLIFailure ?? ClaudeCLIFailure.usageRequestFailed
+        }
+
+        // Closing stdin lets the CLI finish its own config writes and exit on its own.
+        session.finish(gracePeriod: usageExitGracePeriod)
+        return try Self.decodeUsageLimits(body)
+    }
+
+    static func decodeUsageLimits(_ data: Data) throws -> ClaudeUsageLimits {
+        let response: ClaudeGetUsageResponse
+        do {
+            response = try JSONDecoder().decode(ClaudeGetUsageResponse.self, from: data)
+        } catch {
+            throw ClaudeCLIFailure.malformedUsage
+        }
+        guard let rateLimits = response.rateLimits else {
+            throw ClaudeCLIFailure.usageUnavailable
+        }
+        return ClaudeUsageLimits(
+            subscriptionType: response.subscriptionType,
+            fiveHour: rateLimits.fiveHour?.window,
+            sevenDay: rateLimits.sevenDay?.window,
+            sevenDaySonnet: rateLimits.sevenDaySonnet?.value?.window,
+            modelScoped: (rateLimits.modelScoped?.value ?? []).compactMap(\.value).map {
+                ClaudeModelUsageLimit(displayName: $0.displayName, window: $0.window)
+            }
+        )
+    }
+
+    private static func usageProcessEnvironment() -> [String: String] {
+        var environment = processEnvironment()
+        // Markers inherited when the app is launched from a Claude Code session would make
+        // the child behave as a nested session.
+        environment.removeValue(forKey: "CLAUDECODE")
+        environment.removeValue(forKey: "CLAUDE_CODE_ENTRYPOINT")
+        return environment
     }
 
     func authenticationStatus() async throws -> ClaudeAuthenticationStatus {
@@ -128,7 +312,7 @@ actor ClaudeCLIClient: ClaudeCLICommunicating {
     private func run(arguments: [String], capturesOutput: Bool) async throws -> ClaudeProcessResult {
         try Task.checkCancellation()
         guard let runtime = runtimeLocator.runtime() else {
-            throw ClaudeCLIFailure.executableUnavailable
+            throw ClaudeCLIFailure.executableNotFound
         }
         let process = Process()
         let processBox = ClaudeRunningProcess(process)
@@ -198,6 +382,278 @@ private final class ClaudeRunningProcess: @unchecked Sendable {
 private struct ClaudeProcessResult {
     var terminationStatus: Int32
     var output: Data?
+}
+
+/// One short-lived `claude -p` process speaking stream-json control messages over stdio.
+private final class ClaudeControlSession: @unchecked Sendable {
+    static let maximumLineBytes = 4 * 1_048_576
+
+    private let process: Process
+    private let input: FileHandle
+    private let lines: AsyncStream<Data>
+    private let linesContinuation: AsyncStream<Data>.Continuation
+    private let lock = NSLock()
+    private var inputClosed = false
+
+    init(
+        runtime: ClaudeCLIRuntime,
+        arguments: [String],
+        environment: [String: String],
+        workingDirectory: URL
+    ) throws {
+        ProcessSignalPolicy.ignoreBrokenPipes()
+        let inputPipe = Pipe()
+        let outputPipe = Pipe()
+        let process = Process()
+        process.executableURL = runtime.executableURL
+        process.arguments = runtime.argumentPrefix + arguments
+        process.environment = environment
+        process.currentDirectoryURL = workingDirectory
+        process.standardInput = inputPipe
+        process.standardOutput = outputPipe
+        process.standardError = FileHandle.nullDevice
+
+        var continuation: AsyncStream<Data>.Continuation?
+        let lines = AsyncStream<Data>(bufferingPolicy: .bufferingNewest(64)) { continuation = $0 }
+        guard let linesContinuation = continuation else {
+            throw ClaudeCLIFailure.executableUnavailable
+        }
+        let splitter = ClaudeLineSplitter(maximumLineBytes: Self.maximumLineBytes)
+        // The handler runs on a Foundation queue, so no cooperative thread blocks on the pipe.
+        // An empty read means the process closed stdout.
+        outputPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty, let completeLines = splitter.append(chunk) else {
+                handle.readabilityHandler = nil
+                linesContinuation.finish()
+                return
+            }
+            for line in completeLines {
+                linesContinuation.yield(line)
+            }
+        }
+
+        self.process = process
+        self.input = inputPipe.fileHandleForWriting
+        self.lines = lines
+        self.linesContinuation = linesContinuation
+        do {
+            try process.run()
+        } catch {
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            linesContinuation.finish()
+            throw error
+        }
+    }
+
+    func exchange(_ requests: [(id: String, subtype: String)]) async throws -> Data {
+        var iterator = lines.makeAsyncIterator()
+        var lastResponse = Data()
+        for request in requests {
+            try send([
+                "type": "control_request",
+                "request_id": request.id,
+                "request": ["subtype": request.subtype]
+            ])
+            lastResponse = try await response(for: request.id, iterator: &iterator)
+        }
+        return lastResponse
+    }
+
+    /// Lets the CLI exit after stdin closes, and only signals it if it outlives the grace period.
+    func finish(gracePeriod: Duration) {
+        closeInput()
+        let components = gracePeriod.components
+        let seconds = Double(components.seconds) + Double(components.attoseconds) / 1e18
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) { [self] in
+            terminate()
+        }
+    }
+
+    func terminate() {
+        closeInput()
+        if process.isRunning {
+            process.terminate()
+            let processIdentifier = process.processIdentifier
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3) { [process] in
+                if process.isRunning {
+                    kill(processIdentifier, SIGKILL)
+                }
+            }
+        }
+        linesContinuation.finish()
+    }
+
+    private func send(_ message: [String: Any]) throws {
+        var data = try JSONSerialization.data(withJSONObject: message)
+        data.append(0x0A)
+        do {
+            try input.write(contentsOf: data)
+        } catch {
+            throw ClaudeCLIFailure.usageRequestFailed
+        }
+    }
+
+    private func response(
+        for requestID: String,
+        iterator: inout AsyncStream<Data>.Iterator
+    ) async throws -> Data {
+        while let line = await iterator.next() {
+            guard let message = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                  message["type"] as? String == "control_response",
+                  let response = message["response"] as? [String: Any],
+                  response["request_id"] as? String == requestID else {
+                continue
+            }
+            guard response["subtype"] as? String == "success" else {
+                throw ClaudeCLIFailure.usageRequestRejected
+            }
+            guard let body = response["response"] else {
+                return Data("{}".utf8)
+            }
+            guard JSONSerialization.isValidJSONObject(body) else {
+                throw ClaudeCLIFailure.malformedUsage
+            }
+            return try JSONSerialization.data(withJSONObject: body)
+        }
+        try Task.checkCancellation()
+        throw ClaudeCLIFailure.usageRequestFailed
+    }
+
+    private func closeInput() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !inputClosed else {
+            return
+        }
+        inputClosed = true
+        try? input.close()
+    }
+}
+
+/// Splits pipe chunks into newline-delimited records. Returns nil once a single record
+/// exceeds the size cap, which ends the session instead of buffering without bound.
+private final class ClaudeLineSplitter: @unchecked Sendable {
+    private let maximumLineBytes: Int
+    private var buffer = Data()
+
+    init(maximumLineBytes: Int) {
+        self.maximumLineBytes = maximumLineBytes
+    }
+
+    func append(_ chunk: Data) -> [Data]? {
+        buffer.append(chunk)
+        var lines: [Data] = []
+        while let newline = buffer.firstIndex(of: 0x0A) {
+            lines.append(Data(buffer[buffer.startIndex ..< newline]))
+            buffer.removeSubrange(buffer.startIndex ... newline)
+        }
+        guard buffer.count <= maximumLineBytes else {
+            return nil
+        }
+        return lines
+    }
+}
+
+private struct ClaudeGetUsageResponse: Decodable {
+    var subscriptionType: String?
+    var rateLimits: ClaudeGetUsageRateLimits?
+
+    enum CodingKeys: String, CodingKey {
+        case subscriptionType = "subscription_type"
+        case rateLimits = "rate_limits"
+    }
+}
+
+private struct ClaudeGetUsageRateLimits: Decodable {
+    var fiveHour: ClaudeGetUsageWindow?
+    var sevenDay: ClaudeGetUsageWindow?
+    // Per-model windows are additive extras; one malformed entry must not hide the core limits.
+    var sevenDaySonnet: ClaudeLossyDecodable<ClaudeGetUsageWindow>?
+    var modelScoped: ClaudeLossyDecodable<[ClaudeLossyDecodable<ClaudeGetUsageModelWindow>]>?
+
+    enum CodingKeys: String, CodingKey {
+        case fiveHour = "five_hour"
+        case sevenDay = "seven_day"
+        case sevenDaySonnet = "seven_day_sonnet"
+        case modelScoped = "model_scoped"
+    }
+}
+
+private struct ClaudeGetUsageWindow: Decodable {
+    var window: ClaudeUsageLimitWindow
+
+    enum CodingKeys: String, CodingKey {
+        case utilization
+        case resetsAt = "resets_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        window = ClaudeUsageLimitWindow(
+            utilization: try container.decodeIfPresent(Double.self, forKey: .utilization),
+            resetsAt: try ClaudeUsageTimestamp.decode(from: container, forKey: .resetsAt)
+        )
+    }
+}
+
+private struct ClaudeGetUsageModelWindow: Decodable {
+    var displayName: String
+    var window: ClaudeUsageLimitWindow
+
+    enum CodingKeys: String, CodingKey {
+        case displayName = "display_name"
+        case utilization
+        case resetsAt = "resets_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        window = ClaudeUsageLimitWindow(
+            utilization: try container.decodeIfPresent(Double.self, forKey: .utilization),
+            resetsAt: try ClaudeUsageTimestamp.decode(from: container, forKey: .resetsAt)
+        )
+    }
+}
+
+private struct ClaudeLossyDecodable<Value: Decodable>: Decodable {
+    var value: Value?
+
+    init(from decoder: Decoder) throws {
+        value = try? Value(from: decoder)
+    }
+}
+
+private enum ClaudeUsageTimestamp {
+    /// Accepts the documented ISO-8601 string and Unix seconds, the format the status line uses.
+    static func decode<Key: CodingKey>(
+        from container: KeyedDecodingContainer<Key>,
+        forKey key: Key
+    ) throws -> Date? {
+        guard container.contains(key), try !container.decodeNil(forKey: key) else {
+            return nil
+        }
+        if let text = try? container.decode(String.self, forKey: key) {
+            guard let date = ProviderJSON.parseISO8601(text) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: key,
+                    in: container,
+                    debugDescription: "Expected an ISO-8601 timestamp."
+                )
+            }
+            return date
+        }
+        let seconds = try container.decode(Double.self, forKey: key)
+        guard seconds.isFinite, seconds >= 0, seconds <= Date.distantFuture.timeIntervalSince1970 else {
+            throw DecodingError.dataCorruptedError(
+                forKey: key,
+                in: container,
+                debugDescription: "Expected Unix seconds."
+            )
+        }
+        return Date(timeIntervalSince1970: seconds)
+    }
 }
 
 private struct ClaudeAuthStatusResponse: Decodable {
@@ -482,17 +938,20 @@ struct ClaudeUsageProvider: UsageProviderFetching, ProviderAuthenticationManagin
     private let cli: any ClaudeCLICommunicating
     private let usageCache: any ClaudeUsageCacheReading
     private let statusLineInstaller: any ClaudeStatusLineInstalling
+    private let overrides: any ProviderRuntimeOverriding
     private let clock: any ClockProviding
 
     init(
         cli: any ClaudeCLICommunicating = ClaudeCLIClient(),
         usageCache: any ClaudeUsageCacheReading = ClaudeUsageCacheStore(),
         statusLineInstaller: any ClaudeStatusLineInstalling = ClaudeStatusLineInstaller(),
+        overrides: any ProviderRuntimeOverriding = UserDefaultsProviderRuntimeOverrides(),
         clock: any ClockProviding = SystemClock()
     ) {
         self.cli = cli
         self.usageCache = usageCache
         self.statusLineInstaller = statusLineInstaller
+        self.overrides = overrides
         self.clock = clock
     }
 
@@ -501,24 +960,64 @@ struct ClaudeUsageProvider: UsageProviderFetching, ProviderAuthenticationManagin
         guard authentication.usesClaudeAIAuthentication else {
             throw ProviderClientFailure.authenticationRequired(provider: provider)
         }
+        let planName = planDisplayName(for: authentication.subscriptionType)
+
+        guard overrides.claudeUsageSource == .automatic else {
+            return try await cachedSnapshot(planName: planName)
+                ?? ProviderUsageSnapshot(provider: provider, meters: [], health: .noData(checkedAt: clock.now))
+        }
+
+        let liveFailure: ProviderClientFailure
+        do {
+            let meters = try liveMeters(from: try await cli.readUsageLimits(), planName: planName)
+            if !meters.isEmpty {
+                return ProviderUsageSnapshot(provider: provider, meters: meters, health: .fresh(checkedAt: clock.now))
+            }
+            // The CLI answered but every window is empty; status-line data may still cover it.
+            return (try? await cachedSnapshot(planName: planName))
+                ?? ProviderUsageSnapshot(provider: provider, meters: [], health: .noData(checkedAt: clock.now))
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let failure as ProviderClientFailure {
+            liveFailure = failure
+        } catch {
+            liveFailure = mapCLIFailure(error)
+        }
+
+        // Fall back to status-line data, but never hide the live failure behind "no data":
+        // an empty fallback surfaces the CLI error so the menu shows why limits are missing.
+        guard let fallback = try? await cachedSnapshot(planName: planName) else {
+            throw liveFailure
+        }
+        if fallback.health.kind == .stale, let staleSince = fallback.health.staleSince {
+            return ProviderUsageSnapshot(
+                provider: provider,
+                meters: fallback.meters,
+                health: .stale(checkedAt: clock.now, staleSince: staleSince, error: liveFailure.sanitizedError)
+            )
+        }
+        return fallback
+    }
+
+    /// Returns nil when the status-line cache is missing, expired, or has no unexpired window.
+    private func cachedSnapshot(planName: String) async throws -> ProviderUsageSnapshot? {
         guard let cache = try await usageCache.readUsageCache() else {
-            return ProviderUsageSnapshot(provider: provider, meters: [], health: .noData(checkedAt: clock.now))
+            return nil
         }
         let capturedAt = Date(timeIntervalSince1970: cache.capturedAtUnixSeconds)
         let cacheAge = clock.now.timeIntervalSince(capturedAt)
         guard cache.capturedAtUnixSeconds.isFinite,
               cacheAge >= -60,
               cacheAge <= Self.maximumCacheAge else {
-            return ProviderUsageSnapshot(provider: provider, meters: [], health: .noData(checkedAt: clock.now))
+            return nil
         }
 
-        let planName = planDisplayName(for: authentication.subscriptionType)
         let meters = [
             try meter(kind: .claudeSession, limit: cache.fiveHour, planName: planName),
             try meter(kind: .claudeWeekAll, limit: cache.sevenDay, planName: planName)
         ].compactMap { $0 }
         guard !meters.isEmpty else {
-            throw ProviderClientFailure.malformedResponse(provider: provider)
+            return nil
         }
 
         return ProviderUsageSnapshot(
@@ -528,6 +1027,57 @@ struct ClaudeUsageProvider: UsageProviderFetching, ProviderAuthenticationManagin
                 ? .fresh(checkedAt: capturedAt)
                 : .stale(checkedAt: clock.now, staleSince: capturedAt)
         )
+    }
+
+    private func liveMeters(from limits: ClaudeUsageLimits, planName: String) throws -> [UsageMeterSnapshot] {
+        var meters: [MeterKind: UsageMeterSnapshot] = [:]
+        func add(_ kind: MeterKind, _ window: ClaudeUsageLimitWindow?) throws {
+            guard meters[kind] == nil,
+                  let window,
+                  let utilization = window.utilization,
+                  let resetAt = window.resetsAt else {
+                return
+            }
+            guard utilization.isFinite, utilization >= 0 else {
+                throw ProviderClientFailure.malformedResponse(provider: provider)
+            }
+            guard resetAt > clock.now else {
+                return
+            }
+            var display = MeterDisplayMetadata(kind: kind)
+            display.planName = planName
+            // The plan endpoint can report slightly over 100 once a limit is overrun; that is a full meter.
+            meters[kind] = UsageMeterSnapshot(
+                kind: kind,
+                utilization: try UtilizationPercentage(min(utilization, 100)),
+                resetAt: resetAt,
+                display: display
+            )
+        }
+
+        try add(.claudeSession, limits.fiveHour)
+        try add(.claudeWeekAll, limits.sevenDay)
+        try add(.claudeWeekSonnet, limits.sevenDaySonnet)
+        for model in limits.modelScoped {
+            if let kind = Self.weeklyMeterKind(forModelNamed: model.displayName) {
+                try add(kind, model.window)
+            }
+        }
+        return MeterKind.allCases.compactMap { meters[$0] }
+    }
+
+    static func weeklyMeterKind(forModelNamed name: String) -> MeterKind? {
+        let normalized = name.lowercased()
+        if normalized.contains("fable") {
+            return .claudeWeekFable
+        }
+        if normalized.contains("sonnet") {
+            return .claudeWeekSonnet
+        }
+        if normalized.contains("haiku") {
+            return .claudeWeekHaiku
+        }
+        return nil
     }
 
     func startAuthentication() async throws -> ProviderAuthenticationResult {
@@ -573,6 +1123,15 @@ struct ClaudeUsageProvider: UsageProviderFetching, ProviderAuthenticationManagin
                     detail: "Sign in with your Claude subscription."
                 )
             }
+            guard overrides.claudeUsageSource == .statusLine else {
+                return ProviderConnectionStatus(
+                    provider: provider,
+                    state: .connected,
+                    planName: planDisplayName(for: status.subscriptionType),
+                    usageSyncEnabled: true,
+                    detail: "Usage sync enabled"
+                )
+            }
             let bridgeInstalled = await statusLineInstaller.isInstalled()
             return ProviderConnectionStatus(
                 provider: provider,
@@ -587,7 +1146,9 @@ struct ClaudeUsageProvider: UsageProviderFetching, ProviderAuthenticationManagin
                 state: .unavailable,
                 planName: nil,
                 usageSyncEnabled: nil,
-                detail: "Claude Code CLI is unavailable."
+                detail: mapCLIFailure(error) == .executableNotFound(provider: provider)
+                    ? "Claude Code CLI was not found."
+                    : "Claude Code CLI is unavailable."
             )
         }
     }
@@ -601,14 +1162,21 @@ struct ClaudeUsageProvider: UsageProviderFetching, ProviderAuthenticationManagin
     }
 
     private func mapCLIFailure(_ error: any Error) -> ProviderClientFailure {
+        if let failure = error as? ProviderClientFailure {
+            return failure
+        }
         guard let failure = error as? ClaudeCLIFailure else {
             return .runtimeUnavailable(provider: provider)
         }
         switch failure {
-        case .malformedStatus:
+        case .malformedStatus, .malformedUsage:
             return .malformedResponse(provider: provider)
+        case .executableNotFound:
+            return .executableNotFound(provider: provider)
         case .executableUnavailable, .processFailed:
             return .runtimeUnavailable(provider: provider)
+        case .usageRequestRejected, .usageRequestFailed, .usageRequestTimedOut, .usageUnavailable:
+            return .usageUnavailable(provider: provider)
         }
     }
 

@@ -13,18 +13,20 @@ struct CodexAppServerAccount: Equatable, Sendable {
 
 struct CodexAppServerUsage: Equatable, Sendable {
     var planType: String?
-    var primaryWindow: CodexAppServerUsageWindow
+    var primaryWindow: CodexAppServerUsageWindow?
     var secondaryWindow: CodexAppServerUsageWindow?
 }
 
 struct CodexAppServerUsageWindow: Equatable, Sendable {
     var usedPercent: Double
-    var windowDurationMinutes: Double
-    var resetsAtUnixSeconds: Double
+    var windowDurationMinutes: Double?
+    var resetsAtUnixSeconds: Double?
 }
 
 struct CodexUsageProvider: UsageProviderFetching, ProviderAuthenticationManaging, ProviderConnectionChecking {
     let provider: ProviderID = .codex
+    /// Windows up to a day long are the rolling session limit; longer ones are the weekly limit.
+    static let sessionWindowUpperBoundMinutes: Double = 24 * 60
 
     private let appServer: any CodexAppServerCommunicating
     private let clock: any ClockProviding
@@ -40,17 +42,11 @@ struct CodexUsageProvider: UsageProviderFetching, ProviderAuthenticationManaging
     func fetchUsageSnapshot() async throws -> ProviderUsageSnapshot {
         do {
             let usage = try await appServer.readUsage()
-            let planName = planDisplayName(for: usage.planType)
-            var meters = [
-                try meter(kind: .codexSession, window: usage.primaryWindow, planName: planName)
-            ]
-            if let secondaryWindow = usage.secondaryWindow {
-                meters.append(try meter(kind: .codexWeek, window: secondaryWindow, planName: planName))
-            }
+            let meters = try meters(for: usage, planName: planDisplayName(for: usage.planType))
             return ProviderUsageSnapshot(
                 provider: provider,
                 meters: meters,
-                health: .fresh(checkedAt: clock.now)
+                health: meters.isEmpty ? .noData(checkedAt: clock.now) : .fresh(checkedAt: clock.now)
             )
         } catch let failure as CodexAppServerFailure {
             throw providerFailure(for: failure)
@@ -97,7 +93,9 @@ struct CodexUsageProvider: UsageProviderFetching, ProviderAuthenticationManaging
                 state: .unavailable,
                 planName: nil,
                 usageSyncEnabled: nil,
-                detail: "Codex CLI is unavailable."
+                detail: (error as? CodexAppServerFailure) == .executableNotFound
+                    ? "Codex CLI was not found."
+                    : "Codex CLI is unavailable."
             )
         }
     }
@@ -108,22 +106,63 @@ struct CodexUsageProvider: UsageProviderFetching, ProviderAuthenticationManaging
             return .authenticationRequired(provider: provider)
         case .malformedResponse:
             return .malformedResponse(provider: provider)
+        case .executableNotFound:
+            return .executableNotFound(provider: provider)
         case .executableUnavailable, .processUnavailable, .requestFailed:
             return .runtimeUnavailable(provider: provider)
         }
+    }
+
+    /// Classifies each window by its length rather than its position: Codex has reported the
+    /// weekly limit as `primary` with no `secondary`, which is not a five-hour session.
+    private func meters(for usage: CodexAppServerUsage, planName: String) throws -> [UsageMeterSnapshot] {
+        let windows: [(window: CodexAppServerUsageWindow, positionalKind: MeterKind)] = [
+            usage.primaryWindow.map { ($0, MeterKind.codexSession) },
+            usage.secondaryWindow.map { ($0, MeterKind.codexWeek) }
+        ].compactMap { $0 }
+
+        var metersByKind: [MeterKind: UsageMeterSnapshot] = [:]
+        for (window, positionalKind) in windows {
+            let kind = try meterKind(for: window, positionalKind: positionalKind)
+            guard let meter = try meter(kind: kind, window: window, planName: planName) else {
+                continue
+            }
+            // Two windows of the same length: keep the fuller one, since it limits first.
+            if let existing = metersByKind[kind], existing.utilization >= meter.utilization {
+                continue
+            }
+            metersByKind[kind] = meter
+        }
+        return MeterKind.allCases.compactMap { metersByKind[$0] }
+    }
+
+    private func meterKind(
+        for window: CodexAppServerUsageWindow,
+        positionalKind: MeterKind
+    ) throws -> MeterKind {
+        guard let duration = window.windowDurationMinutes else {
+            return positionalKind
+        }
+        guard duration.isFinite, duration > 0 else {
+            throw ProviderClientFailure.malformedResponse(provider: provider)
+        }
+        return duration <= Self.sessionWindowUpperBoundMinutes ? .codexSession : .codexWeek
     }
 
     private func meter(
         kind: MeterKind,
         window: CodexAppServerUsageWindow,
         planName: String
-    ) throws -> UsageMeterSnapshot {
-        guard window.usedPercent.isFinite,
-              window.windowDurationMinutes.isFinite,
-              window.windowDurationMinutes > 0,
-              window.resetsAtUnixSeconds.isFinite,
-              window.resetsAtUnixSeconds >= 0,
-              window.resetsAtUnixSeconds <= Date.distantFuture.timeIntervalSince1970 else {
+    ) throws -> UsageMeterSnapshot? {
+        guard window.usedPercent.isFinite else {
+            throw ProviderClientFailure.malformedResponse(provider: provider)
+        }
+        guard let resetsAt = window.resetsAtUnixSeconds else {
+            return nil
+        }
+        guard resetsAt.isFinite,
+              resetsAt >= 0,
+              resetsAt <= Date.distantFuture.timeIntervalSince1970 else {
             throw ProviderClientFailure.malformedResponse(provider: provider)
         }
 
@@ -133,7 +172,7 @@ struct CodexUsageProvider: UsageProviderFetching, ProviderAuthenticationManaging
             return UsageMeterSnapshot(
                 kind: kind,
                 utilization: try UtilizationPercentage(window.usedPercent),
-                resetAt: Date(timeIntervalSince1970: window.resetsAtUnixSeconds),
+                resetAt: Date(timeIntervalSince1970: resetsAt),
                 display: display
             )
         } catch {

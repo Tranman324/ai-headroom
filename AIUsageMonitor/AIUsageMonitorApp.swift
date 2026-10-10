@@ -4,10 +4,15 @@ import SwiftUI
 @main
 enum AIUsageMonitorEntryPoint {
     static func main() {
-        if CommandLine.arguments.dropFirst().first == ClaudeStatusLineInstaller.bridgeArgument {
+        ProcessSignalPolicy.ignoreBrokenPipes()
+        let firstArgument = CommandLine.arguments.dropFirst().first
+        if firstArgument == ClaudeStatusLineInstaller.bridgeArgument {
             Darwin.exit(ClaudeStatusLineBridgeCommand.run(
                 forwardsInput: CommandLine.arguments.contains(ClaudeStatusLineInstaller.forwardArgument)
             ))
+        }
+        if firstArgument == ProviderDiagnosticsCommand.argument {
+            Darwin.exit(ProviderDiagnosticsCommand.runBlocking())
         }
         AIUsageMonitorApp.main()
     }
