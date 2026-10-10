@@ -445,6 +445,42 @@ final class CodexUsageProviderTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: counterURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), "1")
     }
 
+    func testAnAnswerBetweenTimeoutsKeepsTheServerRunning() async throws {
+        let counterURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        // Account reads alternate: silent, answered, silent, answered.
+        let script = """
+        launches=$(cat "\(counterURL.path)" 2>/dev/null || echo 0)
+        echo $((launches + 1)) > "\(counterURL.path)"
+        reads=0
+        while IFS= read -r line; do
+          id=$(printf '%s' "$line" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p')
+          case "$line" in
+            *account*read*)
+              reads=$((reads + 1))
+              if [ $((reads % 2)) -eq 0 ]; then
+                printf '{"id":%s,"result":{"account":{"type":"chatgpt","planType":"plus"}}}\\n' "$id"
+              fi ;;
+            *initialize*) printf '{"id":%s,"result":{}}\\n' "$id" ;;
+          esac
+        done
+        """
+        let client = CodexAppServerClient(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            executableArguments: ["-c", script],
+            requestTimeout: .milliseconds(400)
+        )
+
+        var answered: [Bool] = []
+        for _ in 0 ..< 4 {
+            answered.append((try? await client.readAccount()) != nil)
+        }
+        await client.shutdown()
+
+        // Timeouts separated by a successful answer are not consecutive, so no restart happens.
+        XCTAssertEqual(answered, [false, true, false, true])
+        XCTAssertEqual(try String(contentsOf: counterURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), "1")
+    }
+
     func testRestartForceKillsAnAppServerThatIgnoresTermination() async throws {
         let pidsURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let script = """

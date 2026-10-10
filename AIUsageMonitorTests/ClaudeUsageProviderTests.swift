@@ -1009,7 +1009,7 @@ final class ClaudeUsageProviderTests: XCTestCase {
     }
 
     func testCLIClientReportsAnExitPromptlyEvenIfAChildKeepsOutputOpen() async {
-        let client = scriptedClient("( sleep 5 ) & exit 2", timeout: .seconds(20))
+        let client = scriptedClient("( sleep 15 ) & exit 2", timeout: .seconds(30))
         let started = ContinuousClock.now
 
         await assertUsageReadFails(client, with: .usageRequestFailed)
