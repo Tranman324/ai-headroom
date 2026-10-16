@@ -90,9 +90,14 @@ struct CodexAppServerRuntimeLocator: CodexAppServerRuntimeLocating {
 }
 
 actor CodexAppServerClient: CodexAppServerCommunicating {
+    static let maximumResponseLineBytes = 1_048_576
+    private static let chatGPTDeviceCodeVerificationHost = "auth.openai.com"
+    private static let outputReadChunkBytes = 16 * 1_024
+
     private let runtimeLocator: (any CodexAppServerRuntimeLocating)?
     private let explicitRuntime: CodexAppServerRuntime?
     private let requestTimeout: Duration
+    private let outputQueueCapacity: Int
 
     private var process: Process?
     private var processToken: UUID?
@@ -115,18 +120,21 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
 
     init(
         runtimeLocator: any CodexAppServerRuntimeLocating = CodexAppServerRuntimeLocator(),
-        requestTimeout: Duration = .seconds(15)
+        requestTimeout: Duration = .seconds(15),
+        outputQueueCapacity: Int = 64
     ) {
         self.runtimeLocator = runtimeLocator
         self.explicitRuntime = nil
         self.requestTimeout = requestTimeout
+        self.outputQueueCapacity = max(1, outputQueueCapacity)
     }
 
     init(
         executableURL: URL,
         executableArguments: [String],
         alternateExecutableArguments: [String]? = nil,
-        requestTimeout: Duration = .seconds(15)
+        requestTimeout: Duration = .seconds(15),
+        outputQueueCapacity: Int = 64
     ) {
         self.runtimeLocator = nil
         self.explicitRuntime = CodexAppServerRuntime(
@@ -135,6 +143,7 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
             alternateArguments: alternateExecutableArguments
         )
         self.requestTimeout = requestTimeout
+        self.outputQueueCapacity = max(1, outputQueueCapacity)
     }
 
     func readAccount() async throws -> CodexAppServerAccount? {
@@ -179,7 +188,7 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
         )
         let login = try decode(CodexDeviceCodeLoginResponse.self, from: response)
         guard login.type == "chatgptDeviceCode",
-              let authorizationURL = URL(string: login.verificationURL),
+              let authorizationURL = validatedDeviceCodeVerificationURL(login.verificationURL),
               !login.userCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw CodexAppServerFailure.malformedResponse
         }
@@ -284,19 +293,36 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
         // Pipes are read on Foundation's handler queue so a hung app-server never pins a thread
         // of the shared concurrency pool; a single consumer keeps the chunks in order.
         var continuation: AsyncStream<Data>.Continuation?
-        let chunks = AsyncStream<Data> { continuation = $0 }
-        let chunkContinuation = continuation
+        let chunks = AsyncStream<Data>(
+            bufferingPolicy: .bufferingOldest(outputQueueCapacity)
+        ) { continuation = $0 }
+        guard let chunkContinuation = continuation else {
+            stopProcess()
+            throw CodexAppServerFailure.processUnavailable
+        }
         outputChunks = chunkContinuation
         let outputHandle = output.fileHandleForReading
         standardOutput = outputHandle
-        outputHandle.readabilityHandler = { handle in
+        outputHandle.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else {
                 handle.readabilityHandler = nil
-                chunkContinuation?.finish()
+                chunkContinuation.finish()
                 return
             }
-            chunkContinuation?.yield(data)
+            var start = 0
+            while start < data.count {
+                let end = min(start + Self.outputReadChunkBytes, data.count)
+                if case .dropped = chunkContinuation.yield(data.subdata(in: start..<end)) {
+                    handle.readabilityHandler = nil
+                    chunkContinuation.finish()
+                    Task {
+                        await self?.outputQueueDidOverflow(token: token)
+                    }
+                    return
+                }
+                start = end
+            }
         }
         outputReadTask = Task { [weak self] in
             for await chunk in chunks {
@@ -381,14 +407,47 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
     }
 
     private func receive(data: Data) {
-        outputBuffer.append(data)
+        // Process each segment separately so a large chunk containing many valid lines cannot
+        // make the retained partial-record buffer grow beyond its per-record limit.
+        var segmentStart = data.startIndex
+        while segmentStart < data.endIndex {
+            let newline = data[segmentStart...].firstIndex(of: 0x0A)
+            let segmentEnd = newline ?? data.endIndex
+            guard appendProtocolBytes(data[segmentStart..<segmentEnd]) else {
+                return
+            }
+            guard let newline else {
+                return
+            }
 
-        // Pipe callbacks may split a JSON-RPC line or deliver several at once.
-        while let newline = outputBuffer.firstIndex(of: 0x0A) {
-            let line = outputBuffer.prefix(upTo: newline)
-            outputBuffer.removeSubrange(outputBuffer.startIndex ... newline)
-            receive(line: Data(line))
+            let line = outputBuffer
+            outputBuffer.removeAll(keepingCapacity: true)
+            receive(line: line)
+            segmentStart = data.index(after: newline)
         }
+    }
+
+    private func appendProtocolBytes(_ bytes: Data.SubSequence) -> Bool {
+        guard outputBuffer.count <= Self.maximumResponseLineBytes,
+              bytes.count <= Self.maximumResponseLineBytes - outputBuffer.count else {
+            stopProcess()
+            failPendingResponses(with: .malformedResponse)
+            return false
+        }
+        outputBuffer.append(contentsOf: bytes)
+        return true
+    }
+
+    private func validatedDeviceCodeVerificationURL(_ value: String) -> URL? {
+        guard let components = URLComponents(string: value),
+              components.scheme?.lowercased() == "https",
+              components.host?.lowercased() == Self.chatGPTDeviceCodeVerificationHost,
+              components.user == nil,
+              components.password == nil,
+              components.port == nil || components.port == 443 else {
+            return nil
+        }
+        return components.url
     }
 
     private func receive(line: Data) {
@@ -439,6 +498,14 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
         }
         stopProcess()
         failPendingResponses(with: .processUnavailable)
+    }
+
+    private func outputQueueDidOverflow(token: UUID) {
+        guard processToken == token else {
+            return
+        }
+        stopProcess()
+        failPendingResponses(with: .malformedResponse)
     }
 
     private func stopProcess() {

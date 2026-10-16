@@ -64,7 +64,11 @@ replace_installed_app() {
         mv "${INSTALL_PATH}" "${outgoing}"
     fi
     if ! mv "${incoming}" "${INSTALL_PATH}"; then
-        [[ -d "${outgoing}" ]] && mv "${outgoing}" "${INSTALL_PATH}"
+        rm -rf "${incoming}"
+        if [[ -d "${outgoing}" ]] && ! mv "${outgoing}" "${INSTALL_PATH}"; then
+            echo "error: install failed and the previous app could not be restored from ${outgoing}" >&2
+            return 1
+        fi
         echo "error: could not install ${source_app}" >&2
         return 1
     fi

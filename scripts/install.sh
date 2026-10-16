@@ -9,7 +9,7 @@ BACKUP_DIR="${AI_USAGE_MONITOR_BACKUP_DIR:-${HOME}/.ai-usage/backups}"
 KEEP_BACKUPS=5
 KEEP_REPLACED=3
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DERIVED_DATA="${REPO_ROOT}/build/DerivedData"
+DERIVED_DATA="${AI_USAGE_MONITOR_DERIVED_DATA_PATH:-${REPO_ROOT}/build/DerivedData}"
 BUILT_APP="${DERIVED_DATA}/Build/Products/Release/${APP_NAME}.app"
 XCODEBUILD_ARGS=(-project "${REPO_ROOT}/AI Usage Monitor.xcodeproj" -scheme "${APP_NAME}" -destination platform=macOS -derivedDataPath "${DERIVED_DATA}" CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO)
 

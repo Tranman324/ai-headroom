@@ -200,7 +200,7 @@ final class CodexUsageProviderTests: XCTestCase {
         let script = """
         while IFS= read -r line; do
           case "$line" in
-            *account*login*start*) printf '%s\\n' '{"id":2,"result":{"type":"chatgptDeviceCode","verificationUrl":"https://auth.openai.example/device","userCode":"LIVE-1234"}}' ;;
+            *account*login*start*) printf '%s\\n' '{"id":2,"result":{"type":"chatgptDeviceCode","verificationUrl":"https://auth.openai.com/codex/device","userCode":"LIVE-1234"}}' ;;
             *initialize*) printf '%s\\n' '{"id":1,"result":{}}' ;;
           esac
         done
@@ -220,8 +220,140 @@ final class CodexUsageProviderTests: XCTestCase {
         await client.shutdown()
 
         XCTAssertEqual(challenge.provider, .codex)
-        XCTAssertEqual(challenge.authorizationURL.absoluteString, "https://auth.openai.example/device")
+        XCTAssertEqual(challenge.authorizationURL.absoluteString, "https://auth.openai.com/codex/device")
         XCTAssertEqual(challenge.userCode, "LIVE-1234")
+    }
+
+    func testAppServerClientRejectsUntrustedDeviceCodeVerificationURLs() async {
+        let rejectedURLs = [
+            "http://auth.openai.com/codex/device",
+            "file:///tmp/device",
+            "https://attacker.example/device",
+            "https://auth.openai.com.attacker.example/device",
+            "https://auth.openai.com@attacker.example/device",
+            "https://auth.openai.com:8443/codex/device"
+        ]
+
+        for rejectedURL in rejectedURLs {
+            let script = """
+            while IFS= read -r line; do
+              case "$line" in
+                *account*login*start*) printf '%s\\n' '{"id":2,"result":{"type":"chatgptDeviceCode","verificationUrl":"\(rejectedURL)","userCode":"LIVE-1234"}}' ;;
+                *initialize*) printf '%s\\n' '{"id":1,"result":{}}' ;;
+              esac
+            done
+            """
+            let client = CodexAppServerClient(
+                executableURL: URL(fileURLWithPath: "/bin/sh"),
+                executableArguments: ["-c", script]
+            )
+
+            do {
+                _ = try await client.startChatGPTAuthentication()
+                XCTFail("Expected unsafe verification URL to be rejected: \(rejectedURL)")
+            } catch let failure as CodexAppServerFailure {
+                XCTAssertEqual(failure, .malformedResponse, rejectedURL)
+            } catch {
+                XCTFail("Unexpected failure for \(rejectedURL): \(error)")
+            }
+            await client.shutdown()
+        }
+    }
+
+    func testAppServerClientRejectsOversizedProtocolRecordAndStopsProcess() async throws {
+        let pidURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let oversizedByteCount = CodexAppServerClient.maximumResponseLineBytes + 1
+        let script = """
+        echo $$ > "\(pidURL.path)"
+        while IFS= read -r line; do
+          id=$(printf '%s' "$line" | sed -n 's/.*"id":\\([0-9]*\\).*/\\1/p')
+          case "$line" in
+            *account*read*)
+              printf '{"id":%s,"result":{"padding":"' "$id"
+              dd if=/dev/zero bs=\(oversizedByteCount) count=1 2>/dev/null | tr '\\000' x
+              printf '"}}\\n'
+              while :; do sleep 1; done ;;
+            *initialize*) printf '{"id":%s,"result":{}}\\n' "$id" ;;
+          esac
+        done
+        """
+        let client = CodexAppServerClient(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            executableArguments: ["-c", script],
+            requestTimeout: .seconds(3)
+        )
+
+        do {
+            _ = try await client.readAccount()
+            XCTFail("Expected an oversized app-server record to fail")
+        } catch let failure as CodexAppServerFailure {
+            XCTAssertEqual(failure, .malformedResponse)
+        } catch {
+            XCTFail("Unexpected failure: \(error)")
+        }
+
+        let processIDText = try String(contentsOf: pidURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let processID = try XCTUnwrap(Int32(processIDText))
+        var isRunning = kill(processID, 0) == 0
+        for _ in 0 ..< 100 where isRunning {
+            try await Task.sleep(for: .milliseconds(20))
+            isRunning = kill(processID, 0) == 0
+        }
+        await client.shutdown()
+
+        XCTAssertFalse(isRunning, "Oversized protocol output must stop its app-server process")
+    }
+
+    func testAppServerClientStopsWhenOutputQueueIsFlooded() async throws {
+        let pidURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let floodURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let inputURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let script = """
+        echo $$ > "\(pidURL.path)"
+        while IFS= read -r line; do
+          printf '%s\\n' "$line" >> "\(inputURL.path)"
+          case "$line" in
+            *initialize*) printf '{"id":1,"result":{}}\\n' ;;
+            *account*read*)
+              touch "\(floodURL.path)"
+              yes '{"method":"noise"}' | head -c 16777216
+              while :; do sleep 1; done ;;
+          esac
+        done
+        """
+        let client = CodexAppServerClient(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            executableArguments: ["-c", script],
+            requestTimeout: .seconds(3),
+            outputQueueCapacity: 1
+        )
+
+        do {
+            _ = try await client.readAccount()
+            XCTFail("Expected a flooded app-server output queue to fail")
+        } catch let failure as CodexAppServerFailure {
+            XCTAssertEqual(failure, .malformedResponse)
+        } catch {
+            XCTFail("Unexpected failure: \(error)")
+        }
+        let receivedRequests = (try? String(contentsOf: inputURL, encoding: .utf8)) ?? "<no requests recorded>"
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: floodURL.path),
+            "Fake app-server did not enter its output flood; received requests: \(receivedRequests)"
+        )
+
+        let processIDText = try String(contentsOf: pidURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let processID = try XCTUnwrap(Int32(processIDText))
+        var isRunning = kill(processID, 0) == 0
+        for _ in 0 ..< 100 where isRunning {
+            try await Task.sleep(for: .milliseconds(20))
+            isRunning = kill(processID, 0) == 0
+        }
+        await client.shutdown()
+
+        XCTAssertFalse(isRunning, "Flooded output must stop its app-server process")
     }
 
     func testAppServerClientTimesOutNonresponsiveRequests() async {
