@@ -66,11 +66,11 @@ final class UsagePresentationTests: XCTestCase {
     }
 
     func testStatusItemTextRemainsReadableInLightAndDarkAppearances() throws {
-        let presentations = [
-            UsagePresentation.statusItem(for: UsageMonitorFixtures.noDataSnapshot),
-            UsagePresentation.statusItem(for: UsageMonitorFixtures.normalSnapshot),
-            UsagePresentation.statusItem(for: UsageMonitorFixtures.warningSnapshot)
-        ]
+        // Below 70% the percentage uses the menu bar's own text colour, like the clock.
+        XCTAssertNil(UsagePresentation.statusItem(for: UsageMonitorFixtures.noDataSnapshot).textColor)
+        XCTAssertNil(UsagePresentation.statusItem(for: UsageMonitorFixtures.normalSnapshot).textColor)
+
+        let warning = UsagePresentation.statusItem(for: UsageMonitorFixtures.warningSnapshot)
         let samples: [(String, NSAppearance, NSColor)] = [
             (
                 "light",
@@ -84,18 +84,17 @@ final class UsagePresentationTests: XCTestCase {
             )
         ]
 
-        for presentation in presentations {
-            for (appearanceName, appearance, background) in samples {
-                XCTAssertGreaterThanOrEqual(
-                    contrastRatio(
-                        foreground: presentation.textColor,
-                        background: background,
-                        appearance: appearance
-                    ),
-                    4.5,
-                    "\(presentation.percentText) text is unreadable in the \(appearanceName) menu bar"
-                )
-            }
+        let warningColor = try XCTUnwrap(warning.textColor)
+        for (appearanceName, appearance, background) in samples {
+            XCTAssertGreaterThanOrEqual(
+                contrastRatio(
+                    foreground: warningColor,
+                    background: background,
+                    appearance: appearance
+                ),
+                4.5,
+                "\(warning.percentText) amber text is unreadable in the \(appearanceName) menu bar"
+            )
         }
     }
 

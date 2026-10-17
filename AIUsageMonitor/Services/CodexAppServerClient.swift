@@ -1,6 +1,7 @@
 import Foundation
 
 enum CodexAppServerFailure: Error, Equatable, Sendable {
+    case executableNotFound
     case executableUnavailable
     case processUnavailable
     case authenticationRequired
@@ -11,6 +12,8 @@ enum CodexAppServerFailure: Error, Equatable, Sendable {
 struct CodexAppServerRuntime: Equatable, Sendable {
     var executableURL: URL
     var arguments: [String]
+    /// Tried when the app-server exits during startup, in case a newer CLI drops a flag.
+    var alternateArguments: [String]?
 }
 
 protocol CodexAppServerRuntimeLocating: Sendable {
@@ -18,56 +21,83 @@ protocol CodexAppServerRuntimeLocating: Sendable {
 }
 
 struct CodexAppServerRuntimeLocator: CodexAppServerRuntimeLocating {
-    private let candidateExecutablePaths: [String]
+    static let arguments = ["app-server", "--stdio"]
+    /// Spelled out rather than relying on the default transport, so a changed default can never
+    /// start a network listener.
+    static let alternateArguments = ["app-server", "--listen", "stdio://"]
+
+    private let candidateExecutablePaths: @Sendable () -> [String]
     private let isExecutable: @Sendable (String) -> Bool
     private let isTrustedExecutable: @Sendable (URL) -> Bool
 
     init(
-        candidateExecutablePaths: [String] = Self.defaultCandidateExecutablePaths,
-        isExecutable: @escaping @Sendable (String) -> Bool = { path in
-            FileManager.default.isExecutableFile(atPath: path)
-        },
-        isTrustedExecutable: @escaping @Sendable (URL) -> Bool = { url in
-            ProviderExecutableTrust.satisfies(
-                ProviderExecutableTrust.openAIRequirement,
-                executableURL: url
-            )
-        }
+        candidateExecutablePaths: [String],
+        isExecutable: @escaping @Sendable (String) -> Bool = Self.defaultIsExecutable,
+        isTrustedExecutable: @escaping @Sendable (URL) -> Bool = Self.defaultIsTrustedExecutable
     ) {
-        self.candidateExecutablePaths = candidateExecutablePaths
+        self.candidateExecutablePaths = { candidateExecutablePaths }
+        self.isExecutable = isExecutable
+        self.isTrustedExecutable = isTrustedExecutable
+    }
+
+    init(
+        overrides: any ProviderRuntimeOverriding = UserDefaultsProviderRuntimeOverrides(),
+        isExecutable: @escaping @Sendable (String) -> Bool = Self.defaultIsExecutable,
+        isTrustedExecutable: @escaping @Sendable (URL) -> Bool = Self.defaultIsTrustedExecutable
+    ) {
+        self.candidateExecutablePaths = {
+            ProviderExecutableDiscovery.codexCandidatePaths(overrides: overrides)
+        }
         self.isExecutable = isExecutable
         self.isTrustedExecutable = isTrustedExecutable
     }
 
     func runtime() -> CodexAppServerRuntime? {
-        if let path = candidateExecutablePaths.first(where: { path in
-            isExecutable(path) && isTrustedExecutable(URL(fileURLWithPath: path))
-        }) {
-            return CodexAppServerRuntime(
-                executableURL: URL(fileURLWithPath: path).resolvingSymlinksInPath(),
-                arguments: ["app-server", "--stdio"]
+        let candidates = ProviderExecutableSelection.inspect(
+            paths: candidateExecutablePaths(),
+            isExecutable: isExecutable,
+            isTrustedExecutable: isTrustedExecutable,
+            inspectAll: false
+        )
+        return ProviderExecutableSelection.firstTrustedURL(in: candidates).map {
+            CodexAppServerRuntime(
+                executableURL: $0,
+                arguments: Self.arguments,
+                alternateArguments: Self.alternateArguments
             )
         }
-        return nil
     }
 
-    private static var defaultCandidateExecutablePaths: [String] {
-        let homeDirectory = NSHomeDirectory()
-        return [
-            "/Applications/ChatGPT.app/Contents/Resources/codex",
-            "\(homeDirectory)/Applications/ChatGPT.app/Contents/Resources/codex",
-            "\(homeDirectory)/.local/bin/codex",
-            "\(homeDirectory)/.codex/bin/codex",
-            "/opt/homebrew/bin/codex",
-            "/usr/local/bin/codex"
-        ]
+    func inspectCandidates() -> [ProviderExecutableCandidate] {
+        ProviderExecutableSelection.inspect(
+            paths: candidateExecutablePaths(),
+            isExecutable: isExecutable,
+            isTrustedExecutable: isTrustedExecutable,
+            inspectAll: true
+        )
+    }
+
+    static let defaultIsExecutable: @Sendable (String) -> Bool = { path in
+        FileManager.default.isExecutableFile(atPath: path)
+    }
+
+    static let defaultIsTrustedExecutable: @Sendable (URL) -> Bool = { url in
+        ProviderExecutableTrust.satisfies(
+            ProviderExecutableTrust.openAIRequirement,
+            executableURL: url
+        )
     }
 }
 
 actor CodexAppServerClient: CodexAppServerCommunicating {
+    static let maximumResponseLineBytes = 1_048_576
+    private static let chatGPTDeviceCodeVerificationHost = "auth.openai.com"
+    private static let outputReadChunkBytes = 16 * 1_024
+
     private let runtimeLocator: (any CodexAppServerRuntimeLocating)?
     private let explicitRuntime: CodexAppServerRuntime?
     private let requestTimeout: Duration
+    private let outputQueueCapacity: Int
 
     private var process: Process?
     private var processToken: UUID?
@@ -78,32 +108,42 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
     private var standardOutput: FileHandle?
     private var standardError: FileHandle?
     private var outputReadTask: Task<Void, Never>?
-    private var errorReadTask: Task<Void, Never>?
+    private var outputChunks: AsyncStream<Data>.Continuation?
     private var outputBuffer = Data()
+    private var startupTask: Task<Void, Error>?
+    private var consecutiveTimeouts = 0
     private var nextRequestID = 1
+    /// One slow answer is tolerated; repeated silence means the app-server is hung.
+    static let timeoutsBeforeRestart = 2
     private var pendingResponses: [Int: CheckedContinuation<[String: Any], Error>] = [:]
     private var requestTimeoutTasks: [Int: Task<Void, Never>] = [:]
 
     init(
         runtimeLocator: any CodexAppServerRuntimeLocating = CodexAppServerRuntimeLocator(),
-        requestTimeout: Duration = .seconds(15)
+        requestTimeout: Duration = .seconds(15),
+        outputQueueCapacity: Int = 64
     ) {
         self.runtimeLocator = runtimeLocator
         self.explicitRuntime = nil
         self.requestTimeout = requestTimeout
+        self.outputQueueCapacity = max(1, outputQueueCapacity)
     }
 
     init(
         executableURL: URL,
         executableArguments: [String],
-        requestTimeout: Duration = .seconds(15)
+        alternateExecutableArguments: [String]? = nil,
+        requestTimeout: Duration = .seconds(15),
+        outputQueueCapacity: Int = 64
     ) {
         self.runtimeLocator = nil
         self.explicitRuntime = CodexAppServerRuntime(
             executableURL: executableURL,
-            arguments: executableArguments
+            arguments: executableArguments,
+            alternateArguments: alternateExecutableArguments
         )
         self.requestTimeout = requestTimeout
+        self.outputQueueCapacity = max(1, outputQueueCapacity)
     }
 
     func readAccount() async throws -> CodexAppServerAccount? {
@@ -124,21 +164,19 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
         }
 
         let rateLimitResponse = try await sendRequest(method: "account/rateLimits/read")
-        let rateLimits = try decode(CodexRateLimitResponse.self, from: rateLimitResponse)
+        let rateLimits = try decode(CodexRateLimitResponse.self, from: rateLimitResponse).rateLimits
+        guard rateLimits.primary != nil || rateLimits.secondary != nil else {
+            throw CodexAppServerFailure.malformedResponse
+        }
+        // Reset credits are an optional extra; a missing or unrecognised block must not hide the limits.
+        let resetCredits = (try? decode(CodexResetCreditsResponse.self, from: rateLimitResponse))?
+            .rateLimitResetCredits?
+            .summary
         return CodexAppServerUsage(
             planType: account.planType,
-            primaryWindow: CodexAppServerUsageWindow(
-                usedPercent: rateLimits.rateLimits.primary.usedPercent,
-                windowDurationMinutes: rateLimits.rateLimits.primary.windowDurationMinutes,
-                resetsAtUnixSeconds: rateLimits.rateLimits.primary.resetsAt
-            ),
-            secondaryWindow: rateLimits.rateLimits.secondary.map {
-                CodexAppServerUsageWindow(
-                    usedPercent: $0.usedPercent,
-                    windowDurationMinutes: $0.windowDurationMinutes,
-                    resetsAtUnixSeconds: $0.resetsAt
-                )
-            }
+            primaryWindow: rateLimits.primary.map(\.usageWindow),
+            secondaryWindow: rateLimits.secondary.map(\.usageWindow),
+            resetCredits: resetCredits
         )
     }
 
@@ -150,7 +188,7 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
         )
         let login = try decode(CodexDeviceCodeLoginResponse.self, from: response)
         guard login.type == "chatgptDeviceCode",
-              let authorizationURL = URL(string: login.verificationURL),
+              let authorizationURL = validatedDeviceCodeVerificationURL(login.verificationURL),
               !login.userCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw CodexAppServerFailure.malformedResponse
         }
@@ -167,46 +205,69 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
     }
 
     private func ensureStarted() async throws {
+        // Concurrent callers share one startup so none of them talks to a half-initialized
+        // app-server or has its process replaced by another caller's retry.
+        if let startupTask {
+            try await startupTask.value
+            return
+        }
         guard process == nil else {
             return
         }
+        let task = Task { try await self.startAndInitialize() }
+        startupTask = task
+        defer { startupTask = nil }
+        try await task.value
+    }
 
-        do {
-            try startProcess()
-        } catch {
-            throw CodexAppServerFailure.executableUnavailable
+    private func startAndInitialize() async throws {
+        // Resolved on every launch so a CLI moved by an app update is found without a restart.
+        guard let runtime = runtimeLocator?.runtime() ?? explicitRuntime else {
+            throw CodexAppServerFailure.executableNotFound
         }
 
-        do {
-            _ = try await sendRequest(
-                method: "initialize",
-                parameters: [
-                    "clientInfo": [
-                        "name": "ai_usage_monitor",
-                        "title": "AI Usage Monitor",
-                        "version": "1.0"
+        let argumentSets = [runtime.arguments] + (runtime.alternateArguments.map { [$0] } ?? [])
+        for (index, arguments) in argumentSets.enumerated() {
+            do {
+                try startProcess(executableURL: runtime.executableURL, arguments: arguments)
+            } catch {
+                throw CodexAppServerFailure.executableUnavailable
+            }
+
+            do {
+                _ = try await sendRequest(
+                    method: "initialize",
+                    parameters: [
+                        "clientInfo": [
+                            "name": "ai_usage_monitor",
+                            "title": "AI Usage Monitor",
+                            "version": "1.0"
+                        ]
                     ]
-                ]
-            )
-            try sendNotification(method: "initialized")
-        } catch {
-            stopProcess()
-            throw error
+                )
+                try sendNotification(method: "initialized")
+                return
+            } catch {
+                stopProcess()
+                // Only an app-server that exited during startup suggests rejected arguments.
+                let exitedDuringStartup = (error as? CodexAppServerFailure) == .processUnavailable
+                guard exitedDuringStartup, index < argumentSets.count - 1 else {
+                    throw error
+                }
+            }
         }
     }
 
-    private func startProcess() throws {
-        guard let runtime = runtimeLocator?.runtime() ?? explicitRuntime else {
-            throw CodexAppServerFailure.executableUnavailable
-        }
+    private func startProcess(executableURL: URL, arguments: [String]) throws {
+        ProcessSignalPolicy.ignoreBrokenPipes()
         let input = Pipe()
         let output = Pipe()
         let standardError = Pipe()
         let newProcess = Process()
         let token = UUID()
 
-        newProcess.executableURL = runtime.executableURL
-        newProcess.arguments = runtime.arguments
+        newProcess.executableURL = executableURL
+        newProcess.arguments = arguments
         newProcess.standardInput = input
         newProcess.standardOutput = output
         newProcess.standardError = standardError
@@ -229,26 +290,51 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
             throw error
         }
 
+        // Pipes are read on Foundation's handler queue so a hung app-server never pins a thread
+        // of the shared concurrency pool; a single consumer keeps the chunks in order.
+        var continuation: AsyncStream<Data>.Continuation?
+        let chunks = AsyncStream<Data>(
+            bufferingPolicy: .bufferingOldest(outputQueueCapacity)
+        ) { continuation = $0 }
+        guard let chunkContinuation = continuation else {
+            stopProcess()
+            throw CodexAppServerFailure.processUnavailable
+        }
+        outputChunks = chunkContinuation
         let outputHandle = output.fileHandleForReading
         standardOutput = outputHandle
-        // Blocking reads stay off the actor; closing the handle unblocks cancellation.
-        outputReadTask = Task.detached(priority: .utility) { [weak self, outputHandle] in
-            while !Task.isCancelled {
-                let data = outputHandle.availableData
-                guard !data.isEmpty else {
+        outputHandle.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                chunkContinuation.finish()
+                return
+            }
+            var start = 0
+            while start < data.count {
+                let end = min(start + Self.outputReadChunkBytes, data.count)
+                if case .dropped = chunkContinuation.yield(data.subdata(in: start..<end)) {
+                    handle.readabilityHandler = nil
+                    chunkContinuation.finish()
+                    Task {
+                        await self?.outputQueueDidOverflow(token: token)
+                    }
                     return
                 }
-                await self?.receive(data: data)
+                start = end
+            }
+        }
+        outputReadTask = Task { [weak self] in
+            for await chunk in chunks {
+                await self?.receive(data: chunk)
             }
         }
 
         let errorHandle = standardError.fileHandleForReading
         self.standardError = errorHandle
-        errorReadTask = Task.detached(priority: .utility) { [errorHandle] in
-            while !Task.isCancelled {
-                guard !errorHandle.availableData.isEmpty else {
-                    return
-                }
+        errorHandle.readabilityHandler = { handle in
+            if handle.availableData.isEmpty {
+                handle.readabilityHandler = nil
             }
         }
     }
@@ -279,7 +365,7 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
                     } catch {
                         return
                     }
-                    await self?.failPendingRequest(identifier, with: CodexAppServerFailure.requestFailed)
+                    await self?.requestDidTimeOut(identifier)
                 }
                 do {
                     try write(request)
@@ -311,26 +397,67 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
         guard let standardInput else {
             throw CodexAppServerFailure.processUnavailable
         }
-        let data = try JSONSerialization.data(withJSONObject: message)
-        standardInput.write(data)
-        standardInput.write(Data([0x0A]))
+        var data = try JSONSerialization.data(withJSONObject: message)
+        data.append(0x0A)
+        do {
+            try standardInput.write(contentsOf: data)
+        } catch {
+            throw CodexAppServerFailure.processUnavailable
+        }
     }
 
     private func receive(data: Data) {
-        outputBuffer.append(data)
+        // Process each segment separately so a large chunk containing many valid lines cannot
+        // make the retained partial-record buffer grow beyond its per-record limit.
+        var segmentStart = data.startIndex
+        while segmentStart < data.endIndex {
+            let newline = data[segmentStart...].firstIndex(of: 0x0A)
+            let segmentEnd = newline ?? data.endIndex
+            guard appendProtocolBytes(data[segmentStart..<segmentEnd]) else {
+                return
+            }
+            guard let newline else {
+                return
+            }
 
-        // Pipe callbacks may split a JSON-RPC line or deliver several at once.
-        while let newline = outputBuffer.firstIndex(of: 0x0A) {
-            let line = outputBuffer.prefix(upTo: newline)
-            outputBuffer.removeSubrange(outputBuffer.startIndex ... newline)
-            receive(line: Data(line))
+            let line = outputBuffer
+            outputBuffer.removeAll(keepingCapacity: true)
+            receive(line: line)
+            segmentStart = data.index(after: newline)
         }
+    }
+
+    private func appendProtocolBytes(_ bytes: Data.SubSequence) -> Bool {
+        guard outputBuffer.count <= Self.maximumResponseLineBytes,
+              bytes.count <= Self.maximumResponseLineBytes - outputBuffer.count else {
+            stopProcess()
+            failPendingResponses(with: .malformedResponse)
+            return false
+        }
+        outputBuffer.append(contentsOf: bytes)
+        return true
+    }
+
+    private func validatedDeviceCodeVerificationURL(_ value: String) -> URL? {
+        guard let components = URLComponents(string: value),
+              components.scheme?.lowercased() == "https",
+              components.host?.lowercased() == Self.chatGPTDeviceCodeVerificationHost,
+              components.user == nil,
+              components.password == nil,
+              components.port == nil || components.port == 443 else {
+            return nil
+        }
+        return components.url
     }
 
     private func receive(line: Data) {
         guard let message = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-              let identifier = requestIdentifier(in: message),
-              let continuation = pendingResponses.removeValue(forKey: identifier) else {
+              let identifier = requestIdentifier(in: message) else {
+            return
+        }
+        // Any answer, even a late one, shows the app-server is alive.
+        consecutiveTimeouts = 0
+        guard let continuation = pendingResponses.removeValue(forKey: identifier) else {
             return
         }
         requestTimeoutTasks.removeValue(forKey: identifier)?.cancel()
@@ -373,20 +500,38 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
         failPendingResponses(with: .processUnavailable)
     }
 
+    private func outputQueueDidOverflow(token: UUID) {
+        guard processToken == token else {
+            return
+        }
+        stopProcess()
+        failPendingResponses(with: .malformedResponse)
+    }
+
     private func stopProcess() {
         let runningProcess = process
         process = nil
         processToken = nil
         if let runningProcess, runningProcess.isRunning {
             runningProcess.terminate()
+            let processIdentifier = runningProcess.processIdentifier
+            // An app-server that ignores SIGTERM must not pile up across restarts.
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3) {
+                if runningProcess.isRunning {
+                    kill(processIdentifier, SIGKILL)
+                }
+            }
         }
-        standardInput?.closeFile()
+        consecutiveTimeouts = 0
+        try? standardInput?.close()
         standardInput = nil
+        standardOutput?.readabilityHandler = nil
+        standardOutput = nil
+        outputChunks?.finish()
+        outputChunks = nil
         outputReadTask?.cancel()
         outputReadTask = nil
-        standardOutput = nil
-        errorReadTask?.cancel()
-        errorReadTask = nil
+        standardError?.readabilityHandler = nil
         standardError = nil
         inputPipe = nil
         outputPipe = nil
@@ -405,6 +550,21 @@ actor CodexAppServerClient: CodexAppServerCommunicating {
         for continuation in pending.values {
             continuation.resume(throwing: failure)
         }
+    }
+
+    private func requestDidTimeOut(_ identifier: Int) {
+        guard pendingResponses[identifier] != nil else {
+            return
+        }
+        consecutiveTimeouts += 1
+        guard consecutiveTimeouts >= Self.timeoutsBeforeRestart else {
+            // Fail only this request: the shared app-server may be holding a sign-in or answering others.
+            failPendingRequest(identifier, with: CodexAppServerFailure.requestFailed)
+            return
+        }
+        // A hung app-server would fail every later poll; dropping it makes the next request relaunch.
+        stopProcess()
+        failPendingResponses(with: .requestFailed)
     }
 
     private func failPendingRequest(_ identifier: Int, with error: any Error) {
@@ -429,15 +589,70 @@ private struct CodexRateLimitResponse: Decodable {
     var rateLimits: CodexRateLimits
 }
 
+private struct CodexResetCreditsResponse: Decodable {
+    var rateLimitResetCredits: CodexResetCreditsSummary?
+}
+
+private struct CodexResetCreditsSummary: Decodable {
+    var availableCount: Int
+    var credits: [CodexResetCredit]?
+
+    enum CodingKeys: String, CodingKey {
+        case availableCount
+        case credits
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        availableCount = try container.decode(Int.self, forKey: .availableCount)
+        // One unreadable credit entry drops only that entry, never the count.
+        credits = (try? container.decodeIfPresent([CodexLossyResetCredit].self, forKey: .credits))?
+            .compactMap(\.credit)
+    }
+
+    var summary: RateLimitResetCredits {
+        RateLimitResetCredits(
+            availableCount: max(0, availableCount),
+            credits: (credits ?? [])
+                .filter { $0.status == nil || $0.status == "available" }
+                .map { RateLimitResetCredit(title: $0.title, expiresAt: $0.expiresAt.map(Date.init(timeIntervalSince1970:))) }
+                .sorted { ($0.expiresAt ?? .distantFuture) < ($1.expiresAt ?? .distantFuture) }
+        )
+    }
+}
+
+private struct CodexLossyResetCredit: Decodable {
+    var credit: CodexResetCredit?
+
+    init(from decoder: Decoder) throws {
+        credit = try? CodexResetCredit(from: decoder)
+    }
+}
+
+/// The opaque credit `id` is deliberately not decoded.
+private struct CodexResetCredit: Decodable {
+    var status: String?
+    var title: String?
+    var expiresAt: Double?
+}
+
 private struct CodexRateLimits: Decodable {
-    var primary: CodexRateLimitWindow
+    var primary: CodexRateLimitWindow?
     var secondary: CodexRateLimitWindow?
 }
 
 private struct CodexRateLimitWindow: Decodable {
     var usedPercent: Double
-    var windowDurationMinutes: Double
-    var resetsAt: Double
+    var windowDurationMinutes: Double?
+    var resetsAt: Double?
+
+    var usageWindow: CodexAppServerUsageWindow {
+        CodexAppServerUsageWindow(
+            usedPercent: usedPercent,
+            windowDurationMinutes: windowDurationMinutes,
+            resetsAtUnixSeconds: resetsAt
+        )
+    }
 
     enum CodingKeys: String, CodingKey {
         case usedPercent

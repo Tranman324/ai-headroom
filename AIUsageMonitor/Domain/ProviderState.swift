@@ -100,16 +100,37 @@ struct ProviderHealth: Codable, Equatable, Sendable {
     }
 }
 
+/// A one-time credit that clears a rate-limit window early (OpenAI Codex "Full reset").
+struct RateLimitResetCredit: Codable, Equatable, Sendable {
+    var title: String?
+    var expiresAt: Date?
+}
+
+/// Reset credits still available to redeem. `availableCount` is authoritative; the provider may
+/// list fewer credits than that. Credit identifiers are never kept.
+struct RateLimitResetCredits: Codable, Equatable, Sendable {
+    var availableCount: Int
+    var credits: [RateLimitResetCredit]
+}
+
 struct ProviderUsageSnapshot: Codable, Equatable, Identifiable, Sendable {
     var id: ProviderID { provider }
     var provider: ProviderID
     var meters: [UsageMeterSnapshot]
     var health: ProviderHealth
+    /// Live-only detail shown in the popover; history records do not keep it.
+    var resetCredits: RateLimitResetCredits?
 
-    init(provider: ProviderID, meters: [UsageMeterSnapshot], health: ProviderHealth) {
+    init(
+        provider: ProviderID,
+        meters: [UsageMeterSnapshot],
+        health: ProviderHealth,
+        resetCredits: RateLimitResetCredits? = nil
+    ) {
         self.provider = provider
         self.meters = meters.filter { $0.provider == provider }
         self.health = health
+        self.resetCredits = resetCredits
     }
 
     var hasCurrentData: Bool {

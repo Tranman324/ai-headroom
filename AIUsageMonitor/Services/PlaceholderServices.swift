@@ -62,25 +62,30 @@ actor InMemoryHistoryStore: HistoryStoring {
     }
 
     func snapshots(since startDate: Date) async throws -> [CombinedUsageSnapshot] {
-        try await records(since: startDate).compactMap { record in
-            if case let .combinedSnapshot(snapshotRecord) = record {
-                return snapshotRecord.snapshot
-            }
-            return nil
-        }
+        HistorySnapshotAssembler.snapshots(from: try await records(since: startDate))
     }
 
     func latestUsableProviderSnapshots() async throws -> [ProviderID: ProviderUsageSnapshot] {
         var latestByProvider: [ProviderID: ProviderUsageSnapshot] = [:]
-        for record in try await records(since: .distantPast) {
+        let allRecords = try await records(since: .distantPast)
+        let weeklyResets = HistorySnapshotAssembler.legacyWeeklyResetTimes(in: allRecords)
+        for record in allRecords {
             switch record {
             case let .combinedSnapshot(snapshotRecord):
                 for providerSnapshot in snapshotRecord.snapshot.providers where providerSnapshot.hasLastKnownGoodData {
-                    latestByProvider[providerSnapshot.provider] = providerSnapshot
+                    latestByProvider[providerSnapshot.provider] = HistorySnapshotAssembler.normalizedLegacyMeters(
+                        providerSnapshot,
+                        capturedAt: snapshotRecord.capturedAt,
+                        weeklyResets: weeklyResets
+                    )
                 }
             case let .providerSnapshot(snapshotRecord):
                 if snapshotRecord.snapshot.hasLastKnownGoodData {
-                    latestByProvider[snapshotRecord.provider] = snapshotRecord.snapshot
+                    latestByProvider[snapshotRecord.provider] = HistorySnapshotAssembler.normalizedLegacyMeters(
+                        snapshotRecord.snapshot,
+                        capturedAt: snapshotRecord.capturedAt,
+                        weeklyResets: weeklyResets
+                    )
                 }
             case .providerFailure:
                 continue

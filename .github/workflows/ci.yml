@@ -15,6 +15,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Installer and rollback recovery tests
+        run: bash scripts/tests/install-rollback.sh
       - name: Unit tests
         run: |
           xcodebuild test \

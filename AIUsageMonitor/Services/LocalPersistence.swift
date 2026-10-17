@@ -64,25 +64,30 @@ actor LocalHistoryStore: HistoryStoring {
     }
 
     func snapshots(since startDate: Date) async throws -> [CombinedUsageSnapshot] {
-        try await records(since: startDate).compactMap { record in
-            if case let .combinedSnapshot(snapshotRecord) = record {
-                return snapshotRecord.snapshot
-            }
-            return nil
-        }
+        HistorySnapshotAssembler.snapshots(from: try await records(since: startDate))
     }
 
     func latestUsableProviderSnapshots() async throws -> [ProviderID: ProviderUsageSnapshot] {
         var latestByProvider: [ProviderID: ProviderUsageSnapshot] = [:]
-        for record in try await records(since: .distantPast) {
+        let allRecords = try await records(since: .distantPast)
+        let weeklyResets = HistorySnapshotAssembler.legacyWeeklyResetTimes(in: allRecords)
+        for record in allRecords {
             switch record {
             case let .combinedSnapshot(snapshotRecord):
                 for providerSnapshot in snapshotRecord.snapshot.providers where providerSnapshot.hasLastKnownGoodData {
-                    latestByProvider[providerSnapshot.provider] = providerSnapshot
+                    latestByProvider[providerSnapshot.provider] = HistorySnapshotAssembler.normalizedLegacyMeters(
+                        providerSnapshot,
+                        capturedAt: snapshotRecord.capturedAt,
+                        weeklyResets: weeklyResets
+                    )
                 }
             case let .providerSnapshot(snapshotRecord):
                 if snapshotRecord.snapshot.hasLastKnownGoodData {
-                    latestByProvider[snapshotRecord.provider] = snapshotRecord.snapshot
+                    latestByProvider[snapshotRecord.provider] = HistorySnapshotAssembler.normalizedLegacyMeters(
+                        snapshotRecord.snapshot,
+                        capturedAt: snapshotRecord.capturedAt,
+                        weeklyResets: weeklyResets
+                    )
                 }
             case .providerFailure:
                 continue
@@ -319,11 +324,24 @@ enum LocalPersistence {
         }
     }
 
+    /// Remnants of interrupted atomic writes are removed once they are clearly abandoned. A fresh
+    /// one may be another writer's replacement in progress (the settings store, the status-line
+    /// bridge, or a diagnostics run in another process), so it is left alone.
+    static let abandonedTemporaryFileAge: TimeInterval = 10 * 60
+
     private static func cleanupTemporaryFiles(in rootURL: URL) throws {
-        guard let contents = try? FileManager.default.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: nil) else {
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: rootURL,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        ) else {
             return
         }
+        let cutoff = Date().addingTimeInterval(-abandonedTemporaryFileAge)
         for url in contents where url.lastPathComponent.hasPrefix(".") && url.lastPathComponent.hasSuffix(".tmp") {
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            guard let modified, modified < cutoff else {
+                continue
+            }
             try? FileManager.default.removeItem(at: url)
         }
     }

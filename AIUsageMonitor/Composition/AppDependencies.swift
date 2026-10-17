@@ -78,7 +78,8 @@ struct AppDependencies: Sendable {
                         return ProviderUsageSnapshot(
                             provider: provider,
                             meters: snapshot.meters,
-                            health: snapshot.health
+                            health: snapshot.health,
+                            resetCredits: snapshot.resetCredits
                         )
                     } catch {
                         return failedProviderSnapshot(
@@ -134,7 +135,8 @@ struct AppDependencies: Sendable {
                 checkedAt: checkedAt,
                 staleSince: previousProvider?.health.checkedAt ?? previousSnapshot?.capturedAt ?? checkedAt,
                 error: sanitizedError
-            )
+            ),
+            resetCredits: previousProvider?.resetCredits
         )
     }
 }

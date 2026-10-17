@@ -42,13 +42,9 @@ final class StatusItemEvidenceTests: XCTestCase {
                 "Critical capsule mismatch at \(sample.utilization)%"
             )
             XCTAssertEqual(
-                presentation.backgroundColor == nil,
-                !sample.expectsCapsule,
-                "Only the critical band should paint a capsule background at \(sample.utilization)%"
-            )
-            XCTAssertTrue(
-                presentation.iconColor.isEqual(expectedIconColor(for: sample.expectedBand)),
-                "Icon colour mismatch at \(sample.utilization)%"
+                presentation.textColor,
+                expectedTextColor(for: sample.expectedBand),
+                "Percentage colour mismatch at \(sample.utilization)%"
             )
             XCTAssertGreaterThan(angle, previousAngle, "Needle angle must increase with utilization at \(sample.utilization)%")
             previousAngle = angle
@@ -58,6 +54,7 @@ final class StatusItemEvidenceTests: XCTestCase {
         let noData = UsagePresentation.statusItem(for: UsageMonitorFixtures.noDataSnapshot)
         XCTAssertEqual(noData.percentText, "--%")
         XCTAssertNil(noData.utilization)
+        XCTAssertNil(noData.textColor)
         XCTAssertFalse(noData.showsCriticalCapsule)
 
         try writeStatusItemEvidenceIfRequested()
@@ -231,32 +228,36 @@ final class StatusItemEvidenceTests: XCTestCase {
         NSAttributedString(string: label, attributes: labelAttributes)
             .draw(at: NSPoint(x: 16, y: rect.midY - 8))
 
-        // Faithful status-item chip: capsule background (critical only), gauge glyph,
-        // and percent text in the band colour.
-        let chipRect = NSRect(x: 150, y: rect.midY - 13, width: 62, height: 26)
-        if let background = presentation.backgroundColor {
-            background.deviceRGBColor.setFill()
-            NSBezierPath(roundedRect: chipRect, xRadius: 11, yRadius: 11).fill()
+        // Faithful status-item chip: the critical capsule image, or the template glyph tinted the
+        // way the menu bar tints it plus the percentage in its band colour.
+        let chipOrigin = NSPoint(x: 150, y: rect.midY - 10)
+        if presentation.showsCriticalCapsule, let utilization = presentation.utilization {
+            let capsule = StatusItemGaugeRenderer.criticalCapsuleImage(utilization: utilization, text: presentation.percentText)
+            capsule.draw(in: NSRect(origin: chipOrigin, size: capsule.size))
+        } else {
+            let glyph = tinted(StatusItemGaugeRenderer.glyphImage(utilization: presentation.utilization), color: UsagePalette.primaryText)
+            glyph.draw(in: NSRect(origin: NSPoint(x: chipOrigin.x, y: chipOrigin.y + 2), size: glyph.size))
+            NSAttributedString(
+                string: presentation.percentText,
+                attributes: [
+                    .font: StatusItemGaugeRenderer.font,
+                    .foregroundColor: (presentation.textColor ?? UsagePalette.primaryText).deviceRGBColor
+                ]
+            ).draw(at: NSPoint(x: chipOrigin.x + 20, y: chipOrigin.y + 2))
         }
-        let gauge = StatusItemGaugeRenderer.image(
-            utilization: presentation.utilization ?? 0,
-            color: presentation.iconColor
-        )
-        gauge.draw(in: NSRect(x: chipRect.minX + 6, y: chipRect.midY - 7, width: 18, height: 14))
-        NSAttributedString(
-            string: presentation.percentText,
-            attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
-                .foregroundColor: presentation.textColor.deviceRGBColor
-            ]
-        ).draw(at: NSPoint(x: chipRect.minX + 28, y: chipRect.midY - 7))
 
         // Enlarged gauge to make the needle angle difference obvious.
-        let enlarged = StatusItemGaugeRenderer.image(
-            utilization: presentation.utilization ?? 0,
-            color: presentation.iconColor
-        )
-        enlarged.draw(in: NSRect(x: 234, y: rect.midY - 21, width: 54, height: 42))
+        let enlarged = tinted(StatusItemGaugeRenderer.glyphImage(utilization: presentation.utilization), color: UsagePalette.primaryText)
+        enlarged.draw(in: NSRect(x: 240, y: rect.midY - 22, width: 44, height: 44))
+    }
+
+    private func tinted(_ template: NSImage, color: NSColor) -> NSImage {
+        NSImage(size: template.size, flipped: false) { rect in
+            template.draw(in: rect)
+            color.deviceRGBColor.setFill()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
     }
 
     // MARK: - Helpers
@@ -283,14 +284,14 @@ final class StatusItemEvidenceTests: XCTestCase {
         )
     }
 
-    private func expectedIconColor(for band: UsageStatusBand) -> NSColor {
+    private func expectedTextColor(for band: UsageStatusBand) -> NSColor? {
         switch band {
         case .normal:
-            return UsagePalette.statusAccent
+            return nil
         case .warning:
             return UsagePalette.statusWarning
         case .critical:
-            return UsagePalette.critical
+            return .white
         }
     }
 

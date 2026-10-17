@@ -28,6 +28,8 @@ struct AppNavigationState: Codable, Equatable, Sendable {
     var isProviderConnectionsPresented: Bool
     var isHistoryExpanded: Bool
     var detailRange: MeterDetailRange
+    /// Set when Connections was opened straight from the usage list, so Back returns there.
+    var connectionsOpenedFromList: Bool?
 
     init(
         meterRoute: MeterDetailRoute = .list,
@@ -49,6 +51,8 @@ enum AppIntentCommand: Codable, Equatable, Sendable {
     case openSettings
     case closeSettings
     case openProviderConnections
+    /// Jumps from the usage list straight to Connections, where sign-in shows its code and progress.
+    case showProviderConnections
     case closeProviderConnections
     case startProviderAuthentication(ProviderID)
     case showMeterDetail(MeterKind)

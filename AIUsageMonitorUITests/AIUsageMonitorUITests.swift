@@ -54,14 +54,17 @@ final class AIUsageMonitorUITests: XCTestCase {
         XCTAssertGreaterThan(evidence.bitmap.pixelCount(near: TestPalette.codexAccent), 100)
     }
 
-    func testModelMeterBarAlignsWithPrimaryMeterBar() throws {
+    func testModelMeterRowSitsUnderItsWeeklyMeter() throws {
+        // A row's bar is part of its button, so it is not a separate accessibility element; the
+        // 12 pt indent is measured on rendered pixels in PopoverDesignEvidenceTests instead.
         let app = launchInteractiveFixture(scenario: "critical", historyExpanded: false)
-        let primaryBar = element(in: app, identifier: "meter-bar-claudeSession")
-        let modelBar = element(in: app, identifier: "meter-bar-claudeWeekFable")
+        let weeklyRow = app.buttons["meter-row-claudeWeekAll"]
+        let modelRow = app.buttons["meter-row-claudeWeekFable"]
 
-        XCTAssertTrue(primaryBar.waitForExistence(timeout: 5))
-        XCTAssertTrue(modelBar.waitForExistence(timeout: 5))
-        XCTAssertEqual(modelBar.frame.minX, primaryBar.frame.minX, accuracy: 1)
+        XCTAssertTrue(weeklyRow.waitForExistence(timeout: 5))
+        XCTAssertTrue(modelRow.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(modelRow.frame.minY, weeklyRow.frame.maxY - 1)
+        XCTAssertEqual(modelRow.frame.width, weeklyRow.frame.width, accuracy: 1)
     }
 
     func testStaleFixtureRendersProviderLocalHealthAndNonblankPixels() throws {
@@ -87,7 +90,9 @@ final class AIUsageMonitorUITests: XCTestCase {
     func testNoDataFixtureRendersExplicitEmptyHistoryWithoutSeriesPixels() throws {
         let evidence = try runFixture(scenario: "no-data", historyExpanded: true)
 
-        assertBaselineBitmap(evidence.bitmap)
+        // With no meters or series there are no bar or chart colors, so this state renders
+        // about 33 quantized colors where populated states render well over 35.
+        assertBaselineBitmap(evidence.bitmap, minimumColorCount: 25)
         XCTAssertTrue(evidence.metadata.contains("status_band: normal"))
         XCTAssertTrue(evidence.metadata.contains("hottest_percent: --"))
         XCTAssertTrue(evidence.metadata.contains("meter_order: \n"))
@@ -369,12 +374,15 @@ final class AIUsageMonitorUITests: XCTestCase {
 
     private func assertBaselineBitmap(
         _ bitmap: BitmapProbe,
+        minimumColorCount: Int = 35,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
         XCTAssertEqual(bitmap.width, 640, file: file, line: line)
-        XCTAssertEqual(bitmap.height, 1040, file: file, line: line)
-        XCTAssertGreaterThan(bitmap.quantizedColorCount, 35, file: file, line: line)
+        // The popover has sized itself to its content since the July layout change, so the
+        // evidence height varies by state instead of being a fixed 520 pt.
+        XCTAssertTrue((500...1400).contains(bitmap.height), "Unexpected popover height \(bitmap.height)", file: file, line: line)
+        XCTAssertGreaterThan(bitmap.quantizedColorCount, minimumColorCount, file: file, line: line)
         XCTAssertGreaterThan(bitmap.luminanceRange(in: .full), 0.45, file: file, line: line)
         XCTAssertGreaterThan(bitmap.luminanceRange(in: .header), 0.30, file: file, line: line)
     }

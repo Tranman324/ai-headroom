@@ -121,11 +121,28 @@ final class LocalSettingsStoreTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let remnant = root.appendingPathComponent(".settings.json.interrupted.tmp")
         try "stale".write(to: remnant, atomically: false, encoding: .utf8)
+        // A remnant from an interrupted write is older than any replacement still in progress.
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-LocalPersistence.abandonedTemporaryFileAge - 60)],
+            ofItemAtPath: remnant.path
+        )
 
         _ = try await store.loadSettings()
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: remnant.path))
         try assertMode(0o700, at: root)
+    }
+
+    func testAReplacementStillInProgressIsNotDeletedByAnotherWritersRecovery() async throws {
+        let root = try temporaryRoot()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // For example the status-line bridge or a diagnostics run writing at the same moment.
+        let inFlight = root.appendingPathComponent(".claude-usage.json.\(UUID().uuidString).tmp")
+        try "partial".write(to: inFlight, atomically: false, encoding: .utf8)
+
+        _ = try await makeStore(root: root).loadSettings()
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: inFlight.path))
     }
 
     func testAtomicReplacementRepairsBroadenedSettingsFilePermissions() async throws {

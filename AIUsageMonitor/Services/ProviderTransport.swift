@@ -55,6 +55,8 @@ enum ProviderClientFailure: Error, Equatable, LocalizedError, Sendable {
     case credentialPersistence(provider: ProviderID)
     case authenticationRequired(provider: ProviderID)
     case runtimeUnavailable(provider: ProviderID)
+    case executableNotFound(provider: ProviderID)
+    case usageUnavailable(provider: ProviderID)
     case transport(provider: ProviderID)
     case unauthorized(provider: ProviderID)
     case rateLimited(provider: ProviderID)
@@ -72,6 +74,8 @@ enum ProviderClientFailure: Error, Equatable, LocalizedError, Sendable {
              let .credentialPersistence(provider),
              let .authenticationRequired(provider),
              let .runtimeUnavailable(provider),
+             let .executableNotFound(provider),
+             let .usageUnavailable(provider),
              let .transport(provider),
              let .unauthorized(provider),
              let .rateLimited(provider),
@@ -84,7 +88,7 @@ enum ProviderClientFailure: Error, Equatable, LocalizedError, Sendable {
 
     var code: ProviderErrorCode {
         switch self {
-        case .credentialUnavailable, .credentialUnreadable, .credentialInsecure, .credentialPersistence, .runtimeUnavailable, .transport, .httpStatus, .refreshFailed:
+        case .credentialUnavailable, .credentialUnreadable, .credentialInsecure, .credentialPersistence, .runtimeUnavailable, .executableNotFound, .usageUnavailable, .transport, .httpStatus, .refreshFailed:
             return .unavailable
         case .malformedCredential, .missingCredentialValue, .malformedResponse:
             return .malformedResponse
@@ -113,6 +117,10 @@ enum ProviderClientFailure: Error, Equatable, LocalizedError, Sendable {
             return "\(provider.displayName) authorization is required."
         case let .runtimeUnavailable(provider):
             return "\(provider.displayName) sign-in service is unavailable."
+        case let .executableNotFound(provider):
+            return "\(provider.cliDisplayName) was not found. Install or update it, then refresh."
+        case let .usageUnavailable(provider):
+            return "\(provider.displayName) usage could not be read from \(provider.cliDisplayName)."
         case let .transport(provider):
             return "\(provider.displayName) usage service could not be reached."
         case let .unauthorized(provider):
@@ -130,6 +138,17 @@ enum ProviderClientFailure: Error, Equatable, LocalizedError, Sendable {
 
     var sanitizedError: SanitizedProviderError {
         SanitizedProviderError(code: code, displayMessage: errorDescription ?? "\(provider.displayName) usage failed.")
+    }
+}
+
+private extension ProviderID {
+    var cliDisplayName: String {
+        switch self {
+        case .claude:
+            return "Claude Code CLI"
+        case .codex:
+            return "Codex CLI"
+        }
     }
 }
 

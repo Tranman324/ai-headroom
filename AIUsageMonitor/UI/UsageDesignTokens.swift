@@ -26,24 +26,17 @@ enum UsagePalette {
     static let warning = NSColor(hex: 0xE3B341)
     static let critical = NSColor(hex: 0xE5484D)
     static let allModels = NSColor(hex: 0xB4B0AA)
+    static let faintText = NSColor(hex: 0x6E6A64)
+    static let criticalText = NSColor(hex: 0xF07478)
+    static let errorReasonText = NSColor(hex: 0xF2A6A9)
     static let sonnet = NSColor(hex: 0xC2A26B)
     static let haiku = NSColor(hex: 0x8FA0B8)
-    static let statusText = adaptiveStatusColor(
-        light: NSColor(deviceWhite: 0.08, alpha: 0.86),
-        dark: NSColor(deviceWhite: 1, alpha: 0.90)
-    )
-    static let statusMutedText = adaptiveStatusColor(
-        light: NSColor(deviceWhite: 0.08, alpha: 0.72),
-        dark: NSColor(deviceWhite: 1, alpha: 0.76)
-    )
     static let statusWarning = adaptiveStatusColor(
         light: NSColor(hex: 0x855600),
         dark: NSColor(hex: 0xFFD25A)
     )
-    static let statusAccent = adaptiveStatusColor(
-        light: NSColor(hex: 0x0077A8),
-        dark: NSColor(hex: 0x80D6FF)
-    )
+    /// A deeper red than `critical` so the capsule's white text meets 4.5:1 contrast.
+    static let statusCriticalCapsule = NSColor(hex: 0xD1343A)
 
     private static func adaptiveStatusColor(light: NSColor, dark: NSColor) -> NSColor {
         NSColor(name: nil) { appearance in

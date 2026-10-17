@@ -411,12 +411,18 @@ actor UsagePollingCoordinator {
                 group.addTask {
                     do {
                         let snapshot = try await client.fetchUsageSnapshot()
+                        // A provider can answer with older data it marks stale, such as the Claude
+                        // status-line cache after a failed live read; keep that marker and its reason.
+                        let health: ProviderHealth = snapshot.health.kind == .stale
+                            ? snapshot.health
+                            : .fresh(checkedAt: capturedAt)
                         return ProviderPollOutcome(
                             provider: provider,
                             snapshot: ProviderUsageSnapshot(
                                 provider: provider,
                                 meters: snapshot.meters,
-                                health: .fresh(checkedAt: capturedAt)
+                                health: health,
+                                resetCredits: snapshot.resetCredits
                             ),
                             failure: nil
                         )
@@ -464,7 +470,8 @@ actor UsagePollingCoordinator {
                     ?? previousProvider.health.checkedAt
                     ?? previousSnapshot.capturedAt,
                 error: error
-            )
+            ),
+            resetCredits: previousProvider.resetCredits
         )
     }
 
